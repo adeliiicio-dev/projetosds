@@ -11,9 +11,24 @@ const SP_SITE_CATALOG = {
     SME: 'clsmeProductCatalog',
     SMB: 'clEppSMBProductCatalog'
   },
-  CO: {},
-  PE: {},
-  MX: {}
+  CO: {
+    eStore: 'coEstoreProductCatalog',
+    Marketplace: 'co3pdProductCatalog',
+    EPP: 'coEppProductCatalog',
+    SME: 'cosmeProductCatalog'
+  },
+  PE: {
+    eStore: 'peEstoreProductCatalog',
+    EPP: 'peEppProductCatalog',
+    SME: 'pesmeProductCatalog'
+  },
+  MX: {
+    eStore: 'mxEstoreProductCatalog',
+    Marketplace: 'mx3pdProductCatalog',
+    EPP: 'mxEppProductCatalog',
+    SME: 'mxsmeProductCatalog',
+    SMB: 'mxSMBProductCatalog'
+  }
 };
 
 const SP_COLUMNS = ['modelCode', 'price', 'currency', 'unit', 'cmsSite', 'minqtd', 'discountPercent', 'userPriceGroup', 'validityFrom', 'validityTo'];
