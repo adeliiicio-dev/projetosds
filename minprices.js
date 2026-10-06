@@ -540,7 +540,9 @@ function mpRenderOverride() {
 }
 
 function mpReparseOverride() {
-  const text = cleanInvisible(document.getElementById('mpOvText').value);
+  const box = mpEl('mpOvText');
+  if (!box) { mpState.overrideParsed = null; return; }
+  const text = cleanInvisible(box.value);
   mpState.overrideParsed = text.trim() ? mpParseOverride(text) : null;
 }
 
@@ -590,17 +592,23 @@ function mpDeleteOverride() {
   mpRenderSaved();
 }
 
+function mpEl(id) { return document.getElementById(id); }
+
 function mpRenderAll() {
   const c = mpCountry();
-  document.getElementById('mpCardTitle').textContent = `Planilha do dia - ${c.name}`;
-  document.getElementById('mpOvTitle').textContent = `Preços fora do padrão - ${c.name}`;
-  document.getElementById('mpSave').innerHTML = `<i class="bi bi-save"></i> Salvar planilha de ${escapeHtml(c.name)}`;
-  document.getElementById('mpOvSave').innerHTML = `<i class="bi bi-save"></i> Salvar em ${escapeHtml(c.name)}`;
+  const card = mpEl('mpCardTitle');
+  if (card) card.textContent = `Planilha do dia - ${c.name}`;
+  const ovTitle = mpEl('mpOvTitle');
+  if (ovTitle) ovTitle.textContent = `Preços fora do padrão - ${c.name}`;
+  const save = mpEl('mpSave');
+  if (save) save.innerHTML = `<i class="bi bi-save"></i> Salvar planilha de ${escapeHtml(c.name)}`;
+  const ovSave = mpEl('mpOvSave');
+  if (ovSave) ovSave.innerHTML = `<i class="bi bi-save"></i> Salvar em ${escapeHtml(c.name)}`;
   mpRenderTabs();
   mpRenderNotice();
   mpRenderRecognition();
   mpRenderSaveProof();
-  mpRenderOverride();
+  if (mpEl('mpOvText')) mpRenderOverride();
   mpRenderSaved();
 }
 
@@ -614,10 +622,11 @@ function mpReparse() {
 
 function mpSelectCountry(code) {
   mpState.drafts[mpState.country] = document.getElementById('mpText').value;
-  mpState.overrideDrafts[mpState.country] = document.getElementById('mpOvText').value;
+  const ovBox = mpEl('mpOvText');
+  if (ovBox) mpState.overrideDrafts[mpState.country] = ovBox.value;
   mpState.country = code;
   document.getElementById('mpText').value = mpState.drafts[code] || '';
-  document.getElementById('mpOvText').value = mpState.overrideDrafts[code] || '';
+  if (ovBox) ovBox.value = mpState.overrideDrafts[code] || '';
   document.getElementById('mpFilter').value = '';
   document.getElementById('mpCatalogFilter').value = '';
   mpReparse();
@@ -697,18 +706,21 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('mpDelete').addEventListener('click', mpDelete);
   document.getElementById('mpFilter').addEventListener('input', mpRenderSaved);
   document.getElementById('mpCatalogFilter').addEventListener('change', mpRenderSaved);
-  let ovTimer;
-  document.getElementById('mpOvText').addEventListener('input', () => {
-    clearTimeout(ovTimer);
-    ovTimer = setTimeout(mpOnOverridePaste, 250);
-  });
-  document.getElementById('mpOvSave').addEventListener('click', () => mpSaveOverride(false));
-  document.getElementById('mpOvSaveAll').addEventListener('click', () => mpSaveOverride(true));
-  document.getElementById('mpOvClear').addEventListener('click', mpClearOverrideText);
-  document.getElementById('mpOvDelete').addEventListener('click', mpDeleteOverride);
+  const ovText = mpEl('mpOvText');
+  if (ovText) {
+    let ovTimer;
+    ovText.addEventListener('input', () => {
+      clearTimeout(ovTimer);
+      ovTimer = setTimeout(mpOnOverridePaste, 250);
+    });
+    mpEl('mpOvSave')?.addEventListener('click', () => mpSaveOverride(false));
+    mpEl('mpOvSaveAll')?.addEventListener('click', () => mpSaveOverride(true));
+    mpEl('mpOvClear')?.addEventListener('click', mpClearOverrideText);
+    mpEl('mpOvDelete')?.addEventListener('click', mpDeleteOverride);
+  }
   mpRenderAll();
 });
 
-if (typeof module !== 'undefined') {
+if (typeof module !== 'undefined' && module.exports) {
   module.exports = { mpParse, mpParsePrice, mpParseOverride, mpOverrideMap, mpMergeOverrideCountry, mpLoadOverrides };
 }

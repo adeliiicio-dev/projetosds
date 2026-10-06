@@ -43,19 +43,77 @@ function prExtractTicket(raw) {
   return anywhere ? anywhere[0].toUpperCase() : '';
 }
 
+function prSplitCells(line, delim) {
+  const s = String(line ?? '');
+  if (delim === 'spaces') {
+    return s.trim().split(/\s{2,}|\t+/).map(c => mpStripQuotes(c.replace(/\u00a0/g, ' ').trim()));
+  }
+  if (delim === '\t') return s.split('\t').map(c => mpStripQuotes(c.replace(/\u00a0/g, ' ').trim()));
+  const out = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '"') {
+      if (inQ && s[i + 1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (ch === delim && !inQ) {
+      out.push(mpStripQuotes(cur.replace(/\u00a0/g, ' ').trim()));
+      cur = '';
+    } else cur += ch;
+  }
+  out.push(mpStripQuotes(cur.replace(/\u00a0/g, ' ').trim()));
+  return out;
+}
+
+function prDelimScore(lines, delim) {
+  const widths = lines.map(s => prSplitCells(s, delim).length);
+  const freq = new Map();
+  widths.forEach(w => { if (w > 1) freq.set(w, (freq.get(w) || 0) + 1); });
+  let width = 1, hits = 0;
+  freq.forEach((n, w) => { if (n > hits || (n === hits && w > width)) { hits = n; width = w; } });
+  return { width, hits };
+}
+
+function prDetectDelimiter(lines) {
+  const sample = lines.slice(0, 25).map(l => l.content);
+  const tab = prDelimScore(sample, '\t');
+  if (tab.hits >= 2 && tab.width >= 2) return '\t';
+  let best = { delim: '\t', hits: tab.hits, width: tab.width };
+  [';', ',', '|'].forEach(d => {
+    const s = prDelimScore(sample, d);
+    if (s.hits > best.hits || (s.hits === best.hits && s.width > best.width)) {
+      best = { delim: d, hits: s.hits, width: s.width };
+    }
+  });
+  if (best.hits >= 2 && best.width >= 2) return best.delim;
+  const sp = prDelimScore(sample, 'spaces');
+  if (sp.hits >= 2 && sp.width > best.width) return 'spaces';
+  return best.hits ? best.delim : (tab.width >= 2 ? '\t' : (sp.width >= 2 ? 'spaces' : best.delim));
+}
+
 function prSplitSheet(text) {
   const lines = String(text || '').replace(/\r/g, '').split('\n')
     .map((content, i) => ({ content, line: i + 1 }))
     .filter(l => l.content.trim() !== '');
   if (!lines.length) return null;
-  const delim = mpDetectDelimiter(lines[0].content);
+  const delim = prDetectDelimiter(lines);
   const rows = lines.map(({ content, line }) => ({
     line,
-    cells: content.split(delim).map(c => mpStripQuotes(c))
+    cells: prSplitCells(content, delim)
   }));
   const width = rows.reduce((m, r) => Math.max(m, r.cells.length), 0);
   rows.forEach(r => { while (r.cells.length < width) r.cells.push(''); });
   return { delim, rows, width };
+}
+
+function prPickHeaderIdx(rows, width) {
+  const n = Math.min(rows.length, 8);
+  for (let i = 0; i < n; i++) {
+    const filled = rows[i].cells.filter(c => String(c).trim()).length;
+    const tickets = rows[i].cells.filter(c => prExtractTicket(c)).length;
+    if (tickets === 0 && filled >= Math.max(2, width - 1)) return i;
+  }
+  return 0;
 }
 
 function prFindHeader(headers, aliases) {
@@ -111,25 +169,38 @@ function prParseCurrent(text) {
 
 function prParseNew(text) {
   const sheet = prSplitSheet(text);
-  if (!sheet) return { ok: false, error: 'Cole a tabela nova.', rows: [], headers: [], width: 0 };
-  const first = sheet.rows[0].cells;
-  const looksHeader = prFindHeader(first, ['ticket', 'link', 'comentario', 'comment', 'priority', 'assignee', 'status']) >= 0
+  if (!sheet) return { ok: false, error: 'Cole a tabela nova.', rows: [], headers: [], width: 0, samples: [] };
+  const headerIdx = prPickHeaderIdx(sheet.rows, sheet.width);
+  const first = sheet.rows[headerIdx].cells;
+  const looksHeader = prFindHeader(first, ['ticket', 'link', 'comentario', 'comment', 'priority', 'assignee', 'status', 'key', 'issue', 'jira']) >= 0
     || !prExtractTicket(first.join(' '));
-  const headerRow = looksHeader ? first : first.map((_, i) => 'Coluna ' + (i + 1));
-  const data = looksHeader ? sheet.rows.slice(1) : sheet.rows;
+  const headerRow = looksHeader ? first : first.map((_, i) => '');
+  const data = looksHeader ? sheet.rows.slice(headerIdx + 1) : sheet.rows.slice(headerIdx);
+  const headers = headerRow.map((h, i) => String(h || '').trim() || ('Coluna ' + (i + 1)));
+  const samples = [];
+  for (let i = 0; i < sheet.width; i++) {
+    const hit = data.find(r => String(r.cells[i] || '').trim());
+    samples[i] = hit ? String(hit.cells[i]).trim().slice(0, 40) : '';
+  }
   const scored = prScoreTicketCols(data, sheet.width);
-  const namedTicket = prFindHeader(headerRow, ['ticket', 'link', 'key', 'issue']);
-  const namedComment = prFindHeader(headerRow, ['comentario', 'comment', 'comments', 'notes', 'obs', 'observacao']);
+  const namedTicket = prFindHeader(headers, ['ticket', 'link', 'key', 'issue', 'jira']);
+  const namedComment = prFindHeader(headers, [
+    'comentario', 'comentarios', 'comment', 'comments', 'notes', 'note', 'nota', 'notas',
+    'obs', 'observacao', 'observacoes', 'observacion', 'observaciones',
+    'descripcion', 'description', 'descricao', 'justificacion', 'justificativa',
+    'motivo', 'remarks', 'detalle', 'detalhe', 'details'
+  ]);
   let ticketCol = namedTicket >= 0 && scored.scores[namedTicket] > 0 ? namedTicket : scored.idx;
   return {
     ok: data.length > 0,
     error: data.length ? '' : 'Nenhuma linha de dados na tabela nova.',
-    headers: headerRow,
+    headers,
     data,
     width: sheet.width,
     ticketCol,
     commentCol: namedComment,
     scores: scored.scores,
+    samples,
     hasHeader: looksHeader
   };
 }
@@ -227,10 +298,11 @@ function prToTsv(built, withHeader) {
   return lines.join('\r\n');
 }
 
-function prSelOptions(headers, selected, scores) {
+function prSelOptions(headers, selected, scores, samples) {
   return headers.map((h, i) => {
     const n = scores && scores[i] ? ` (${scores[i]} ticket${scores[i] > 1 ? 's' : ''})` : '';
-    return `<option value="${i}" ${i === selected ? 'selected' : ''}>${i + 1}. ${escapeHtml(h || '(vazio)')}${n}</option>`;
+    const ex = samples && samples[i] ? ` — ${samples[i]}` : '';
+    return `<option value="${i}" ${i === selected ? 'selected' : ''}>${i + 1}. ${escapeHtml(h || '(vazio)')}${n}${escapeHtml(ex)}</option>`;
   }).join('');
 }
 
@@ -262,11 +334,12 @@ function prRefresh() {
     colBox.innerHTML = neu.error ? `<div class="muted">${escapeHtml(neu.error)}</div>` : '';
   } else {
     colBox.innerHTML = `
+      <div class="muted small mb-2">${neu.width} coluna(s) lida(s)${neu.width < 2 ? ' — se faltou coluna, copie de novo no Excel (Ctrl+A na planilha, não só o que aparece).' : ''}.</div>
       <div class="d-flex flex-wrap gap-3 align-items-end">
         <div>
           <label class="form-label mb-1" for="prTicketCol">Coluna do ticket (final do link Jira)</label>
-          <select id="prTicketCol" class="form-select form-select-sm" style="min-width: 260px">
-            ${prSelOptions(neu.headers, prState.ticketCol, neu.scores)}
+          <select id="prTicketCol" class="form-select form-select-sm" style="min-width: 280px">
+            ${prSelOptions(neu.headers, prState.ticketCol, neu.scores, neu.samples)}
           </select>
         </div>
         <div class="form-check mt-4">
@@ -275,13 +348,19 @@ function prRefresh() {
         </div>
         <div id="prCommentWrap" style="${prState.noComment ? 'display:none' : ''}">
           <label class="form-label mb-1" for="prCommentCol">Coluna de comentário</label>
-          <select id="prCommentCol" class="form-select form-select-sm" style="min-width: 260px">
+          <select id="prCommentCol" class="form-select form-select-sm" style="min-width: 280px">
             <option value="-1" ${prState.commentCol < 0 ? 'selected' : ''}>— escolher —</option>
-            ${prSelOptions(neu.headers, prState.commentCol)}
+            ${prSelOptions(neu.headers, prState.commentCol, null, neu.samples)}
           </select>
+          <div class="catalog-list mt-2" id="prCommentChips">
+            ${neu.headers.map((h, i) => `
+              <button type="button" class="catalog-pill ${i === prState.commentCol ? 'active' : ''}" data-pr-comment="${i}">
+                ${escapeHtml(h)}<small>${escapeHtml(neu.samples[i] || 'col. ' + (i + 1))}</small>
+              </button>`).join('')}
+          </div>
         </div>
       </div>
-      <div class="muted small mt-2">Sub desta montagem: <strong>${escapeHtml(c.sub)}</strong> (${escapeHtml(c.name)}). Ticket = texto depois da última / do link (ex.: LC-53129).</div>`;
+      <div class="muted small mt-2">Sub desta montagem: <strong>${escapeHtml(c.sub)}</strong> (${escapeHtml(c.name)}). Ticket = texto depois da última / do link (ex.: LC-53129). Clique na coluna de comentário se o nome não veio no cabeçalho.</div>`;
     document.getElementById('prTicketCol').addEventListener('change', e => {
       prState.ticketCol = Number(e.target.value);
       prState.pickedTicket = true;
@@ -294,6 +373,14 @@ function prRefresh() {
     const cc = document.getElementById('prCommentCol');
     if (cc) cc.addEventListener('change', e => {
       prState.commentCol = Number(e.target.value);
+      prState.pickedComment = true;
+      prRefresh();
+    });
+    const chips = document.getElementById('prCommentChips');
+    if (chips) chips.addEventListener('click', e => {
+      const b = e.target.closest('[data-pr-comment]');
+      if (!b) return;
+      prState.commentCol = Number(b.dataset.prComment);
       prState.pickedComment = true;
       prRefresh();
     });
@@ -484,8 +571,8 @@ if (typeof document !== 'undefined') {
   });
 }
 
-if (typeof module !== 'undefined') {
+if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    prExtractTicket, prParseCurrent, prParseNew, prNewTickets, prMerge, prBuildSheet, prToTsv, prFormulaStatus, prFormulaLink
+    prExtractTicket, prParseCurrent, prParseNew, prNewTickets, prMerge, prBuildSheet, prToTsv, prFormulaStatus, prFormulaLink, prDetectDelimiter, prSplitSheet
   };
 }
