@@ -93,14 +93,37 @@ function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function partFileName(headers) {
+  const blob = ((headers['content-disposition'] || '') + ';' + (headers['content-type'] || '')).replace(/\r?\n/g, ' ');
+  const star = blob.match(/(?:file)?name\*\s*=\s*(?:utf-8''|iso-8859-1''|us-ascii'')?([^;]+)/i);
+  if (star) {
+    try { return decodeURIComponent(star[1].trim().replace(/["']/g, '')); } catch { /* ignore */ }
+  }
+  const m = blob.match(/(?:file)?name\s*=\s*"?([^";]+)"?/i);
+  return m ? m[1].trim() : '';
+}
+
+function looksLikeHtml(text) {
+  return /<(html|body|div|p|table|br|span|meta)\b/i.test(text.slice(0, 4000));
+}
+
+function looksLikeBase64Blob(text) {
+  const s = String(text || '').replace(/\s+/g, '');
+  if (s.length < 20000) return false;
+  const n = (s.match(/[A-Za-z0-9+/=]/g) || []).length;
+  return n / s.length > 0.95;
+}
+
 function collectTextParts(raw, parts, info, depth = 0) {
   if (depth > 10) return;
   const { headers, body } = splitEntity(raw);
-  const ctype = headers['content-type'] || 'text/plain';
-  const lower = ctype.toLowerCase();
+  const ctype = headers['content-type'] || '';
+  const lower = (ctype || 'text/plain').toLowerCase();
   const encoding = (headers['content-transfer-encoding'] || '7bit').toLowerCase();
   const charset = (ctype.match(/charset="?([^";]+)"?/i) || [])[1] || '';
-  const typeName = (lower.split(';')[0] || '').trim();
+  const typeName = (lower.split(';')[0] || '').trim() || 'text/plain';
+  const disposition = (headers['content-disposition'] || '').toLowerCase();
+  const fileName = partFileName(headers);
 
   if (lower.startsWith('multipart/')) {
     const bm = ctype.match(/boundary\s*=\s*"?([^";\s]+)"?/i);
@@ -115,20 +138,36 @@ function collectTextParts(raw, parts, info, depth = 0) {
     });
     return;
   }
-  if (lower.startsWith('message/rfc822')) {
-    info.push({ type: typeName, status: 'e-mail anexado' });
-    collectTextParts(body, parts, info, depth + 1);
+
+  // Anexo: não entra na conferência (nem e-mail encaminhado, nem arquivo).
+  if (/^\s*attachment/.test(disposition) || lower.startsWith('message/rfc822')) {
+    info.push({
+      type: typeName, encoding, size: body.length,
+      status: 'ignorado (anexo' + (fileName ? ': ' + fileName : '') + ')'
+    });
     return;
   }
-  const isText = typeName.startsWith('text/') || !headers['content-type'];
+  const isText = typeName.startsWith('text/') || !ctype;
   if (!isText || typeName === 'text/calendar') {
     info.push({ type: typeName, encoding, size: body.length, status: 'ignorado (não é texto)' });
     return;
   }
+  if (fileName && !/^\s*inline/.test(disposition) && typeName !== 'text/html') {
+    info.push({ type: typeName, encoding, size: body.length, status: 'ignorado (anexo: ' + fileName + ')' });
+    return;
+  }
 
   const bytes = decodeBodyBytes(body, encoding);
+  if (looksBinary(bytes)) {
+    info.push({ type: typeName, encoding, size: bytes.length, status: 'ignorado (conteúdo binário, provável anexo)' });
+    return;
+  }
+  if (!ctype && looksLikeBase64Blob(body)) {
+    info.push({ type: typeName, encoding, size: bytes.length, status: 'ignorado (bloco base64 sem tipo, provável anexo)' });
+    return;
+  }
   const decoded = cleanInvisible(decodeBytesWithCharset(bytes, charset));
-  const text = typeName === 'text/html' ? htmlToText(decoded) : decoded;
+  const text = (typeName === 'text/html' || looksLikeHtml(decoded)) ? htmlToText(decoded) : decoded;
   parts.push(text);
   info.push({
     type: typeName, encoding, charset: charset || '(não informado)',
@@ -166,6 +205,8 @@ function readEml(buffer) {
       raw += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
     }
   }
+  // Final de linha antigo (só CR): converte para LF.
+  if (!/\n/.test(raw.slice(0, 5000)) && /\r/.test(raw.slice(0, 5000))) raw = raw.replace(/\r/g, '\n');
   const original = raw;
   raw = normalizeRoot(raw);
   let { headers } = splitEntity(raw);
@@ -188,7 +229,8 @@ function readEml(buffer) {
     subject: decodeMimeWordsPumi(headers.subject || ''),
     date: headers.date || ''
   };
-  const text = [meta.from, meta.to, meta.cc, meta.subject, ...parts].join('\n');
+  // Só o corpo do e-mail: cabeçalhos (De/Para/Cc/Assunto) e anexos ficam fora da conferência.
+  const text = parts.join('\n');
   const readCount = partsInfo.filter(p => p.status === 'lido').length;
   const note = readCount === 0 ? 'Nenhuma parte de texto foi encontrada neste e-mail.' : '';
   return { meta, text, searchText: text, note, partsInfo };
@@ -267,7 +309,6 @@ async function loadMsgReader() {
 }
 
 async function readMsg(buffer) {
-  const raw = scanBinaryStrings(buffer);
   try {
     const MsgReader = await loadMsgReader();
     const d = new MsgReader(buffer).getFileData();
@@ -292,17 +333,28 @@ async function readMsg(buffer) {
       date: d.messageDeliveryTime || d.creationTime || d.clientSubmitTime || ''
     };
 
-    const readable = [meta.from, meta.to, meta.subject, d.headers || '', d.body || '',
-      html ? htmlToText(html) : '', rtfText].join('\n');
-    // A conferência usa também a varredura do binário; a tela mostra só o texto legível.
-    return { meta, text: readable, searchText: readable + '\n' + raw, note: '' };
+    const skipped = (d.attachments || []).map(a => ({
+      type: a.mimeType || a.contentType || 'attachment',
+      status: 'ignorado (anexo: ' + (a.fileName || a.name || 'sem nome') + ')'
+    }));
+
+    // Só o corpo (texto, HTML, RTF). Remetente, destinatários e anexos ficam fora.
+    const readable = cleanInvisible([d.body || '', html ? htmlToText(html) : '', rtfText].join('\n'));
+    if (!readable.trim()) {
+      return {
+        meta, text: '', searchText: '', partsInfo: skipped,
+        note: 'Não foi possível ler o corpo do .msg. Anexos foram ignorados.',
+        unreadable: 'Não foi possível separar o corpo deste .msg.'
+      };
+    }
+    return { meta, text: readable, searchText: readable, note: '', partsInfo: skipped };
   } catch (err) {
-    console.warn('msgreader indisponível, usando leitura simplificada:', err);
+    console.warn('msgreader indisponível:', err);
     return {
       meta: { from: '', to: '', cc: '', subject: '', date: '' },
-      text: raw,
-      searchText: raw,
-      note: 'Leitura simplificada do .msg (biblioteca indisponível). Confira o texto abaixo.'
+      text: '', searchText: '', partsInfo: [],
+      note: 'Não foi possível ler o corpo deste .msg. Anexos não foram consultados.',
+      unreadable: 'Não foi possível ler o corpo deste .msg.'
     };
   }
 }
@@ -439,7 +491,11 @@ async function readPumiFile(file) {
   if (isMsgExt) return readMsg(buffer);
 
   const utf16 = bytes.length > 1 && ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF));
-  if (!utf16 && (magic.kind || looksBinary(bytes))) {
+  let head = '';
+  for (let i = 0; i < Math.min(bytes.length, 8000); i++) head += String.fromCharCode(bytes[i]);
+  const looksLikeEmail = /^(content-type|mime-version|from|return-path|received|subject|date):/im.test(head);
+  // .eml com anexo binário cru ainda é e-mail: não recusar o arquivo inteiro.
+  if (!utf16 && !looksLikeEmail && (magic.kind || looksBinary(bytes))) {
     const what = magic.label || 'conteúdo binário (provavelmente criptografado ou protegido)';
     return {
       meta: { from: '', to: '', cc: '', subject: '', date: '' },
@@ -452,5 +508,5 @@ async function readPumiFile(file) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { readEml, checkPumi, PUMI_APPROVERS };
+  module.exports = { readEml, readPumiFile, checkPumi, PUMI_APPROVERS };
 }

@@ -227,7 +227,7 @@ h1 {
 .file-info dl { margin: 0; display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; }
 .file-info dt { color: var(--text-muted); font-weight: 600; }
 .file-info dd { margin: 0; word-break: break-word; }
-.file-info .email-body {
+.email-body {
   margin-top: 10px;
   max-height: 180px;
   overflow: auto;
@@ -306,6 +306,9 @@ h1 {
 .approver { font-size: .9rem; margin-top: 4px; }
 .approver.found { color: #6ee7b7; font-weight: 600; }
 .approver.missing { color: var(--text-muted); }
+
+.pumi-paste summary { cursor: pointer; user-select: none; }
+.pumi-paste summary:hover { color: var(--accent-primary); }
 
 .pumi-textarea {
   font-size: .85rem;
