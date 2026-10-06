@@ -3,6 +3,7 @@ function showScreen(name, menuItem) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById('screen-' + name);
   if (target) target.classList.add('active');
+  if (name === 'special-price' && typeof spRefresh === 'function') spRefresh(); // pega dados novos de Minimum prices
 
   const active = menuItem || name;
   document.querySelectorAll('.side-button').forEach(b => {
@@ -54,8 +55,9 @@ function hasExt(file, exts) {
   return exts.some(x => name.endsWith(x));
 }
 
+// Atualiza a conferência do template e o resultado geral (specialprice.js).
 function updateStartButton() {
-  document.getElementById('btnIniciar').disabled = !(state.pumi && state.pumi.result && state.template);
+  if (typeof spRefresh === 'function') spRefresh();
 }
 
 /* ===== PUMI (e-mail) ===== */
@@ -198,7 +200,7 @@ async function handleTemplate(file) {
   }
   try {
     const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array' });
+    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
     state.template = { file, workbook };
     renderTemplate();
     updateStartButton();
@@ -226,10 +228,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   setupDropzone('templateDrop', 'templateInput', handleTemplate);
 
-  document.getElementById('sheetSelect').addEventListener('change', e => renderSheet(e.target.value));
-  document.getElementById('btnLimpar').addEventListener('click', clearAll);
-  document.getElementById('btnIniciar').addEventListener('click', () => {
-    // TODO: lógica da triagem de Special price (aguardando detalhes)
-    alert('Arquivos carregados. Lógica da triagem será definida na próxima etapa.');
+  document.getElementById('sheetSelect').addEventListener('change', e => {
+    renderSheet(e.target.value);
+    updateStartButton();
   });
+  document.getElementById('btnLimpar').addEventListener('click', clearAll);
 });

@@ -377,3 +377,23 @@ h1 {
 .saved-card-cats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .catalog-tag { background: #0b1233; border: 1px solid var(--border-color); border-radius: 6px; padding: 1px 8px; font-size: .78rem; }
 .catalog-tag small { color: var(--text-muted); }
+
+/* Special price */
+.site-selector { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; }
+.site-label { font-weight: 700; color: #cdd5ff; }
+.catalog-pill.pill-unset { opacity: .55; border-style: dashed; }
+.row-fail td { background: rgba(248, 113, 113, .10) !important; }
+.table-wrap td.num { text-align: right; }
+.cell-bad { color: #fca5a5; font-weight: 700; }
+.status-good { color: #6ee7b7; font-weight: 600; }
+.status-bad { color: #fca5a5; font-weight: 600; white-space: normal; }
+.table-wrap td:last-child { white-space: normal; min-width: 260px; }
+.result-wait { background: rgba(154, 166, 214, .1); border-color: rgba(154, 166, 214, .5); color: var(--text-muted); }
+.overall-list { display: grid; gap: 6px; margin-top: 12px; }
+.overall-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border-color); border-left-width: 4px; border-radius: 8px; background: var(--card-soft); }
+.overall-line span { color: var(--text-muted); font-size: .9rem; }
+.overall-ok { border-left-color: var(--accent-success); }
+.overall-ok > i { color: var(--accent-success); }
+.overall-fail { border-left-color: var(--accent-danger); }
+.overall-fail > i { color: var(--accent-danger); }
+.overall-wait > i { color: var(--text-muted); }
