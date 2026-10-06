@@ -55,19 +55,40 @@ function spReference(code, catalog) {
   const country = spCountry(code);
   const base = { priceColumn: country.priceColumn, countryName: country.name };
   const saved = mpLoadAll()[code];
-  if (!saved) {
+  const ovMap = typeof mpOverrideMap === 'function' ? mpOverrideMap(code) : new Map();
+  const ovCount = ovMap.size;
+
+  if (!saved && !ovCount) {
     return { ...base, error: `Nenhuma planilha de Minimum prices salva para ${country.name}. Salve primeiro no menu "Minimum prices".` };
   }
-  const cats = mpSavedCatalogs(saved);
-  const found = cats.find(c => c.name.toUpperCase() === catalog.toUpperCase());
-  if (!found) {
-    return { ...base, savedCatalogs: cats, error: `Catálogo "${catalog}" não encontrado nos dados de Minimum prices de ${country.name}.` };
-  }
+
   const map = new Map();
-  saved.rows.forEach(r => {
-    if (String(r[1]).toUpperCase() === catalog.toUpperCase()) map.set(String(r[0]).toUpperCase(), r[2]);
-  });
-  return { ...base, map, catalog: found.name, count: map.size, savedAt: saved.savedAt };
+  let foundCatalog = null;
+  let savedCatalogs = [];
+  if (saved) {
+    savedCatalogs = mpSavedCatalogs(saved);
+    foundCatalog = savedCatalogs.find(c => c.name.toUpperCase() === catalog.toUpperCase());
+    if (foundCatalog) {
+      saved.rows.forEach(r => {
+        if (String(r[1]).toUpperCase() === catalog.toUpperCase()) map.set(String(r[0]).toUpperCase(), r[2]);
+      });
+    }
+  }
+  ovMap.forEach((price, model) => map.set(model, price));
+
+  if (!foundCatalog && !ovCount) {
+    return { ...base, savedCatalogs, error: `Catálogo "${catalog}" não encontrado nos dados de Minimum prices de ${country.name}.` };
+  }
+
+  return {
+    ...base, map,
+    catalog: foundCatalog ? foundCatalog.name : catalog,
+    count: map.size,
+    savedAt: saved ? saved.savedAt : null,
+    overrideCount: ovCount,
+    fromOverride: ovMap,
+    catalogMissing: !!(saved && !foundCatalog)
+  };
 }
 
 function spSiteInfo() {
@@ -202,6 +223,7 @@ function spEvaluate(parsed, ref) {
 
     results.push({
       line, modelCode, price, refPrice, issues,
+      fromOverride: !!(modelCode && ref.fromOverride && ref.fromOverride.has(modelCode.toUpperCase())),
       cmsSite: String(get(cells, 'cmsSite') ?? '').trim(),
       from: from.display || '', to: to.display || ''
     });
@@ -213,13 +235,18 @@ function spEvaluate(parsed, ref) {
 
 function spRenderSelectors() {
   const all = mpLoadAll();
+  const ov = typeof mpLoadOverrides === 'function' ? mpLoadOverrides() : {};
   document.getElementById('spCountryTabs').innerHTML = MP_COUNTRIES.map(c => {
     const saved = all[c.code];
+    const extras = ov[c.code]?.rows?.length || 0;
+    const status = saved
+      ? ('Minimum prices: ' + saved.rows.length + (extras ? ' · ' + extras + ' extra' + (extras > 1 ? 's' : '') : ''))
+      : (extras ? extras + ' extra' + (extras > 1 ? 's' : '') + ' · sem oficial' : 'sem Minimum prices');
     return `
       <button type="button" class="country-tab ${c.code === spState.country ? 'active' : ''}" data-sp-country="${c.code}">
         <span class="country-tab-code">${c.code}</span>
         <span class="country-tab-name">${escapeHtml(c.name)}</span>
-        <span class="country-tab-status ${saved ? 'saved' : ''}">${saved ? 'Minimum prices: ' + saved.rows.length : 'sem Minimum prices'}</span>
+        <span class="country-tab-status ${saved || extras ? 'saved' : ''}">${status}</span>
       </button>`;
   }).join('');
 
@@ -244,8 +271,10 @@ function spRenderSelectors() {
     html = `<div class="check-item check-ok">
         <div class="check-head"><i class="bi bi-check-circle-fill"></i>
           <strong>Site ${escapeHtml(spState.site)}</strong>
-          <span>catálogo <mark>${escapeHtml(info.catalog)}</mark> encontrado em Minimum prices de ${escapeHtml(c.name)}
-            (${info.ref.count} modelos) · preço de referência: <strong>${info.ref.priceColumn}</strong></span></div>
+          <span>catálogo <mark>${escapeHtml(info.catalog)}</mark> em ${escapeHtml(c.name)}
+            (${info.ref.count} modelos) · preço de referência: <strong>${info.ref.priceColumn}</strong>
+            ${info.ref.overrideCount ? ` · ${info.ref.overrideCount} extra(s) por cima da oficial` : ''}
+            ${info.ref.catalogMissing ? ' · catálogo oficial não encontrado, extras ainda valem' : ''}</span></div>
       </div>`;
   }
   document.getElementById('spSiteStatus').innerHTML = html;
@@ -365,7 +394,7 @@ function spRunTemplate() {
             <td class="muted">${r.line}</td>
             <td><strong>${escapeHtml(r.modelCode)}</strong></td>
             <td class="num">${r.price === null ? '-' : mpFmtNumber(r.price)}</td>
-            <td class="num ${r.refPrice === 0 ? 'cell-bad' : 'price-read'}">${r.refPrice === undefined ? '-' : mpFmtNumber(r.refPrice)}</td>
+            <td class="num ${r.refPrice === 0 ? 'cell-bad' : 'price-read'}">${r.refPrice === undefined ? '-' : mpFmtNumber(r.refPrice)}${r.fromOverride ? ' <small class="muted">extra</small>' : ''}</td>
             <td>${escapeHtml(r.cmsSite)}</td>
             <td>${escapeHtml(r.from)}</td>
             <td>${escapeHtml(r.to)}</td>

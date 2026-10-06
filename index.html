@@ -170,7 +170,7 @@
       <!-- Minimum prices -->
       <section id="screen-minimum-prices" class="screen">
         <h1>Minimum prices</h1>
-        <p class="subtitle">Escolha o país, cole a planilha de preço mínimo do dia e confira como o sistema reconheceu antes de salvar.</p>
+        <p class="subtitle">Escolha o país, cole a planilha oficial do dia e, se precisar, preços extras (modelCode + minProductPrice) que ainda não estão nela.</p>
 
         <div class="country-tabs" id="mpTabs"></div>
         <div id="mpNotice" class="mb-3"></div>
@@ -192,6 +192,25 @@
 
           <div id="mpSaveProof"></div>
           <div id="mpRecognition" class="mt-3"></div>
+        </div>
+
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-pencil-square text-accent fs-4"></i>
+            <h4 class="m-0" id="mpOvTitle">Preços fora do padrão</h4>
+          </div>
+          <p class="muted mb-3">Cole a planilha extra com <strong>modelCode</strong> e <strong>minProductPrice</strong>. Esses preços passam a valer no mínimo (por cima da oficial) até você salvar de novo a planilha completa do país. Também no Chile esta extra usa minProductPrice.</p>
+          <textarea id="mpOvText" class="form-control pumi-textarea" rows="6"
+            placeholder="Cole aqui modelCode e minProductPrice..." spellcheck="false"></textarea>
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <button class="btn btn-samsung" id="mpOvSave" disabled><i class="bi bi-save"></i> Salvar neste país</button>
+            <button class="btn btn-outline-secondary" id="mpOvSaveAll" disabled><i class="bi bi-globe"></i> Salvar nos 4 países</button>
+            <button class="btn btn-outline-secondary" id="mpOvClear"><i class="bi bi-x-circle"></i> Limpar campo</button>
+            <button class="btn btn-sm btn-outline-danger" id="mpOvDelete"><i class="bi bi-trash"></i> Apagar extras do país</button>
+          </div>
+          <div id="mpOvProof"></div>
+          <div id="mpOvRecognition" class="mt-3"></div>
+          <div id="mpOvTable" class="mt-3"></div>
         </div>
 
         <div class="section-card">

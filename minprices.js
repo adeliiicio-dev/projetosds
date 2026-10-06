@@ -17,6 +17,7 @@ const MP_COLUMNS = [
 ];
 
 const MP_STORAGE_KEY = 'sds.minPrices.v3';
+const MP_OVERRIDE_KEY = 'sds.minPriceOverrides.v1';
 const MP_PREVIEW_ROWS = 50;
 const MP_SAVED_ROWS = 100;
 const MP_NO_CATALOG = '(sem catálogo)';
@@ -24,9 +25,12 @@ const MP_NO_CATALOG = '(sem catálogo)';
 const mpState = {
   country: 'CL',
   drafts: {},          // texto colado por país (só em memória)
+  overrideDrafts: {},
   parsed: null,
+  overrideParsed: null,
   previewCatalog: '',  // filtro de catálogo na prévia ('' = todos)
-  lastSave: null       // { code, savedAt, priceColumn, expected, matched }
+  lastSave: null,      // { code, savedAt, priceColumn, expected, matched }
+  lastOverrideSave: null
 };
 
 function mpCountry(code) {
@@ -187,6 +191,85 @@ function mpSavedCatalogs(saved) {
   return mpCatalogsOf(saved.rows.map(r => ({ catalog: r[1] })));
 }
 
+function mpLoadOverrides() {
+  try { return JSON.parse(localStorage.getItem(MP_OVERRIDE_KEY)) || {}; }
+  catch { return {}; }
+}
+
+function mpSaveOverrideCountry(code, rows) {
+  const all = mpLoadOverrides();
+  all[code] = { savedAt: new Date().toISOString(), rows };
+  localStorage.setItem(MP_OVERRIDE_KEY, JSON.stringify(all));
+  return all[code];
+}
+
+function mpMergeOverrideCountry(code, incoming) {
+  const map = new Map();
+  (mpLoadOverrides()[code]?.rows || []).forEach(r => map.set(String(r[0]).toUpperCase(), r));
+  incoming.forEach(r => map.set(String(r[0]).toUpperCase(), [r[0], r[1]]));
+  return mpSaveOverrideCountry(code, Array.from(map.values()));
+}
+
+function mpDeleteOverrides(code) {
+  const all = mpLoadOverrides();
+  delete all[code];
+  localStorage.setItem(MP_OVERRIDE_KEY, JSON.stringify(all));
+}
+
+function mpOverrideMap(code) {
+  const m = new Map();
+  (mpLoadOverrides()[code]?.rows || []).forEach(r => m.set(String(r[0]).toUpperCase(), r[1]));
+  return m;
+}
+
+function mpParseOverride(text) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n')
+    .map((content, i) => ({ content, lineNo: i + 1 }))
+    .filter(l => l.content.trim() !== '');
+  if (!lines.length) return null;
+
+  let headerIdx = -1, delim = '\t';
+  for (let i = 0; i < Math.min(lines.length, 10); i++) {
+    const d = mpDetectDelimiter(lines[i].content);
+    const cells = lines[i].content.split(d).map(c => mpNormKey(mpStripQuotes(c)));
+    if (cells.includes('modelcode') || cells.includes('minproductprice') || cells.includes('variantproduct')) {
+      headerIdx = i; delim = d; break;
+    }
+  }
+  const headerFound = headerIdx >= 0;
+  if (!headerFound) delim = mpDetectDelimiter(lines[0].content);
+
+  let modelIdx = 0, priceIdx = 1;
+  if (headerFound) {
+    const norm = lines[headerIdx].content.split(delim).map(c => mpNormKey(mpStripQuotes(c)));
+    const find = aliases => {
+      for (const a of aliases) { const i = norm.indexOf(a); if (i >= 0) return i; }
+      return -1;
+    };
+    modelIdx = find(['modelcode', 'variantproduct']);
+    priceIdx = find(['minproductprice', 'minimumproductprice', 'msp']);
+  }
+
+  const missing = [];
+  if (modelIdx < 0) missing.push('modelCode');
+  if (priceIdx < 0) missing.push('minProductPrice');
+  if (missing.length) return { headerFound, missing, rows: [] };
+
+  const rows = [];
+  const seen = new Map();
+  lines.slice(headerFound ? headerIdx + 1 : 0).forEach(({ content, lineNo }) => {
+    const cells = content.split(delim).map(mpStripQuotes);
+    const model = String(cells[modelIdx] || '').trim();
+    const rawPrice = cells[priceIdx] ?? '';
+    const price = mpParsePrice(rawPrice);
+    if (!model || price === null) return;
+    if (mpNormKey(model) === 'modelcode') return;
+    seen.set(model.toUpperCase(), { lineNo, model, rawPrice, price });
+  });
+  seen.forEach(r => rows.push(r));
+  return { headerFound, missing: [], modelIdx, priceIdx, rows };
+}
+
 /* ---------- Formatação ---------- */
 
 function mpFmtNumber(n) {
@@ -201,13 +284,18 @@ function mpFmtDate(iso) {
 
 function mpRenderTabs() {
   const all = mpLoadAll();
+  const ov = mpLoadOverrides();
   document.getElementById('mpTabs').innerHTML = MP_COUNTRIES.map(c => {
     const saved = all[c.code];
+    const extras = ov[c.code]?.rows?.length || 0;
+    const status = saved
+      ? (saved.rows.length + ' registros' + (extras ? ' · ' + extras + ' extra' + (extras > 1 ? 's' : '') : ''))
+      : (extras ? extras + ' extra' + (extras > 1 ? 's' : '') + ' · sem oficial' : 'sem dados');
     return `
       <button type="button" class="country-tab ${c.code === mpState.country ? 'active' : ''}" data-country="${c.code}">
         <span class="country-tab-code">${c.code}</span>
         <span class="country-tab-name">${escapeHtml(c.name)}</span>
-        <span class="country-tab-status ${saved ? 'saved' : ''}">${saved ? saved.rows.length + ' registros' : 'sem dados'}</span>
+        <span class="country-tab-status ${saved || extras ? 'saved' : ''}">${status}</span>
       </button>`;
   }).join('');
 }
@@ -323,22 +411,6 @@ function mpRenderRecognition() {
     ${ignoredNote}`;
 }
 
-function mpRenderSaveProof() {
-  const box = document.getElementById('mpSaveProof');
-  const s = mpState.lastSave;
-  if (!s || s.code !== mpState.country) { box.innerHTML = ''; return; }
-  const ok = s.matched === s.expected && s.expected > 0;
-  box.innerHTML = `
-    <div class="result-banner ${ok ? 'result-ok' : 'result-fail'} mt-3">
-      <i class="bi ${ok ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}"></i>
-      <div>
-        <div class="result-title">${ok ? 'SALVO' : 'FALHA AO SALVAR'}</div>
-        <div class="result-sub">${escapeHtml(mpCountry(s.code).name)} · ${mpFmtDate(s.savedAt)} · preço da coluna <strong>${s.priceColumn}</strong> ·
-          conferência na leitura de volta: <strong>${s.matched} de ${s.expected}</strong> registros (${MP_KEY_COLUMN} + catálogo) com o mesmo preço.</div>
-      </div>
-    </div>`;
-}
-
 function mpRenderSaved() {
   const all = mpLoadAll();
   const code = mpState.country;
@@ -346,6 +418,7 @@ function mpRenderSaved() {
 
   document.getElementById('mpSavedCards').innerHTML = MP_COUNTRIES.map(k => {
     const s = all[k.code];
+    const extras = mpLoadOverrides()[k.code]?.rows?.length || 0;
     const cats = s ? mpSavedCatalogs(s) : [];
     return `
       <div class="saved-card ${k.code === code ? 'active' : ''} ${s ? '' : 'empty'}">
@@ -355,7 +428,8 @@ function mpRenderSaved() {
           <div class="muted small">Preço de: <strong>${s.priceColumn}</strong></div>
           <div class="saved-card-cats">${cats.map(x => `<span class="catalog-tag">${escapeHtml(x.name)} <small>${x.count}</small></span>`).join('')}</div>
           <div class="muted small mt-1">Salvo em ${mpFmtDate(s.savedAt)}</div>`
-          : '<div class="muted small mt-2">Nenhuma planilha salva.</div>'}
+          : '<div class="muted small mt-2">Nenhuma planilha oficial.</div>'}
+        ${extras ? `<div class="muted small mt-1">Fora do padrão: <strong>${extras}</strong></div>` : ''}
       </div>`;
   }).join('');
 
@@ -394,14 +468,139 @@ function mpRenderSaved() {
     <div class="muted small mt-2">${filtered.length} de ${s.rows.length} registros${filtered.length > MP_SAVED_ROWS ? ` (mostrando ${MP_SAVED_ROWS})` : ''}.</div>`;
 }
 
+function mpRenderSaveProof() {
+  const box = document.getElementById('mpSaveProof');
+  const s = mpState.lastSave;
+  if (!s || s.code !== mpState.country) { box.innerHTML = ''; return; }
+  const ok = s.matched === s.expected && s.expected > 0;
+  box.innerHTML = `
+    <div class="result-banner ${ok ? 'result-ok' : 'result-fail'} mt-3">
+      <i class="bi ${ok ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}"></i>
+      <div>
+        <div class="result-title">${ok ? 'SALVO' : 'FALHA AO SALVAR'}</div>
+        <div class="result-sub">${escapeHtml(mpCountry(s.code).name)} · ${mpFmtDate(s.savedAt)} · preço da coluna <strong>${s.priceColumn}</strong> ·
+          conferência na leitura de volta: <strong>${s.matched} de ${s.expected}</strong> registros (${MP_KEY_COLUMN} + catálogo) com o mesmo preço.
+          Preços fora do padrão deste país foram apagados.</div>
+      </div>
+    </div>`;
+}
+
+function mpRenderOverride() {
+  const rec = document.getElementById('mpOvRecognition');
+  const proof = document.getElementById('mpOvProof');
+  const tableBox = document.getElementById('mpOvTable');
+  const p = mpState.overrideParsed;
+  const c = mpCountry();
+  const saveBtn = document.getElementById('mpOvSave');
+  const saveAll = document.getElementById('mpOvSaveAll');
+  const delBtn = document.getElementById('mpOvDelete');
+  const savedOv = mpLoadOverrides()[mpState.country];
+
+  const canSave = !!(p && !p.missing.length && p.rows.length);
+  saveBtn.disabled = !canSave;
+  saveAll.disabled = !canSave;
+  delBtn.disabled = !(savedOv && savedOv.rows.length);
+
+  if (!p) rec.innerHTML = '';
+  else if (p.missing.length || !p.rows.length) {
+    rec.innerHTML = `<div class="result-banner result-fail">
+      <i class="bi bi-x-circle-fill"></i>
+      <div><div class="result-title">PLANILHA EXTRA NÃO RECONHECIDA</div>
+        <div class="result-sub">${p.missing.length ? 'Falta coluna: ' + p.missing.join(', ') + '.' : 'Nenhuma linha com modelCode e minProductPrice válidos.'}</div></div></div>`;
+  } else {
+    rec.innerHTML = `<div class="result-banner result-ok">
+      <i class="bi bi-check-circle-fill"></i>
+      <div><div class="result-title">EXTRA RECONHECIDA</div>
+        <div class="result-sub">${p.rows.length} modelCode(s). Salvar neste país ou nos 4. Vale por cima da planilha oficial.</div></div></div>
+      <div class="table-wrap mt-3"><table class="table table-sm table-dark table-bordered mb-0">
+        <thead><tr><th>modelCode</th><th>minProductPrice (lido)</th></tr></thead>
+        <tbody>${p.rows.slice(0, MP_PREVIEW_ROWS).map(r => `<tr><td><strong>${escapeHtml(r.model)}</strong></td><td class="price-read">${mpFmtNumber(r.price)}</td></tr>`).join('')}</tbody>
+      </table></div>
+      ${p.rows.length > MP_PREVIEW_ROWS ? `<div class="muted small mt-2">Mostrando ${MP_PREVIEW_ROWS} de ${p.rows.length}.</div>` : ''}`;
+  }
+
+  const ls = mpState.lastOverrideSave;
+  if (ls) {
+    proof.innerHTML = `<div class="result-banner result-ok mt-3">
+      <i class="bi bi-check-circle-fill"></i>
+      <div><div class="result-title">EXTRAS SALVOS</div>
+        <div class="result-sub">${escapeHtml(ls.scope)} · ${ls.count} modelCode(s) · ${mpFmtDate(ls.savedAt)}</div></div></div>`;
+  } else proof.innerHTML = '';
+
+  if (!savedOv || !savedOv.rows.length) {
+    tableBox.innerHTML = '<div class="muted">Nenhum preço extra salvo neste país.</div>';
+    return;
+  }
+  tableBox.innerHTML = `
+    <div class="muted small mb-2">Valendo agora em ${escapeHtml(c.name)} (${savedOv.rows.length}) · salvo ${mpFmtDate(savedOv.savedAt)}</div>
+    <div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
+      <thead><tr><th>modelCode</th><th>minProductPrice</th></tr></thead>
+      <tbody>${savedOv.rows.slice(0, MP_SAVED_ROWS).map(r => `<tr><td><strong>${escapeHtml(r[0])}</strong></td><td class="price-read">${mpFmtNumber(r[1])}</td></tr>`).join('')}</tbody>
+    </table></div>`;
+}
+
+function mpReparseOverride() {
+  const text = cleanInvisible(document.getElementById('mpOvText').value);
+  mpState.overrideParsed = text.trim() ? mpParseOverride(text) : null;
+}
+
+function mpOnOverridePaste() {
+  mpReparseOverride();
+  mpState.lastOverrideSave = null;
+  mpRenderOverride();
+}
+
+function mpSaveOverride(allCountries) {
+  const p = mpState.overrideParsed;
+  if (!p || !p.rows.length) return;
+  const incoming = p.rows.map(r => [r.model, r.price]);
+  const codes = allCountries ? MP_COUNTRIES.map(c => c.code) : [mpState.country];
+  const label = allCountries ? '4 países' : mpCountry().name;
+  if (!confirm(`Atualizar ${incoming.length} preço(s) extra(s) em ${label}? Modelos já salvos neste destino são sobrescritos; os outros extras permanecem.`)) return;
+  try {
+    let last;
+    codes.forEach(code => { last = mpMergeOverrideCountry(code, incoming); });
+    mpState.lastOverrideSave = { scope: label, count: incoming.length, savedAt: last.savedAt };
+  } catch (err) {
+    alert('Não foi possível salvar: ' + err.message);
+    return;
+  }
+  mpRenderTabs();
+  mpRenderOverride();
+  mpRenderSaved();
+}
+
+function mpClearOverrideText() {
+  document.getElementById('mpOvText').value = '';
+  mpState.overrideDrafts[mpState.country] = '';
+  mpState.overrideParsed = null;
+  mpState.lastOverrideSave = null;
+  mpRenderOverride();
+}
+
+function mpDeleteOverride() {
+  const code = mpState.country;
+  const n = mpLoadOverrides()[code]?.rows?.length || 0;
+  if (!n) return;
+  if (!confirm(`Apagar ${n} preço(s) extra(s) de ${mpCountry(code).name}?`)) return;
+  mpDeleteOverrides(code);
+  mpState.lastOverrideSave = null;
+  mpRenderTabs();
+  mpRenderOverride();
+  mpRenderSaved();
+}
+
 function mpRenderAll() {
   const c = mpCountry();
   document.getElementById('mpCardTitle').textContent = `Planilha do dia - ${c.name}`;
+  document.getElementById('mpOvTitle').textContent = `Preços fora do padrão - ${c.name}`;
   document.getElementById('mpSave').innerHTML = `<i class="bi bi-save"></i> Salvar planilha de ${escapeHtml(c.name)}`;
+  document.getElementById('mpOvSave').innerHTML = `<i class="bi bi-save"></i> Salvar em ${escapeHtml(c.name)}`;
   mpRenderTabs();
   mpRenderNotice();
   mpRenderRecognition();
   mpRenderSaveProof();
+  mpRenderOverride();
   mpRenderSaved();
 }
 
@@ -415,11 +614,14 @@ function mpReparse() {
 
 function mpSelectCountry(code) {
   mpState.drafts[mpState.country] = document.getElementById('mpText').value;
+  mpState.overrideDrafts[mpState.country] = document.getElementById('mpOvText').value;
   mpState.country = code;
   document.getElementById('mpText').value = mpState.drafts[code] || '';
+  document.getElementById('mpOvText').value = mpState.overrideDrafts[code] || '';
   document.getElementById('mpFilter').value = '';
   document.getElementById('mpCatalogFilter').value = '';
   mpReparse();
+  mpReparseOverride();
   mpRenderAll();
 }
 
@@ -436,17 +638,24 @@ function mpSave() {
   const code = mpState.country;
   const c = mpCountry();
   const prev = mpLoadAll()[code];
-  if (prev && !confirm(`Já existe planilha salva para ${c.name} (${prev.rows.length} registros, ${mpFmtDate(prev.savedAt)}).\nSubstituir?`)) return;
+  const extrasN = mpLoadOverrides()[code]?.rows?.length || 0;
+  let ask = '';
+  if (prev) ask = `Já existe planilha salva para ${c.name} (${prev.rows.length} registros, ${mpFmtDate(prev.savedAt)}).\nSubstituir?`;
+  if (extrasN) ask += (ask ? '\n' : '') + `Os ${extrasN} preço(s) fora do padrão deste país serão apagados.`;
+  if (ask && !confirm(ask)) return;
   try {
     const saved = mpSaveCountry(code, p);
     const v = mpVerifySaved(code, p);
     mpState.lastSave = { code, savedAt: saved.savedAt, priceColumn: saved.priceColumn, expected: v.expected, matched: v.matched };
+    mpDeleteOverrides(code);
+    mpState.lastOverrideSave = null;
   } catch (err) {
     alert('Não foi possível salvar (armazenamento do navegador cheio?): ' + err.message);
     return;
   }
   mpRenderTabs();
   mpRenderSaveProof();
+  mpRenderOverride();
   mpRenderSaved();
 }
 
@@ -488,9 +697,18 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('mpDelete').addEventListener('click', mpDelete);
   document.getElementById('mpFilter').addEventListener('input', mpRenderSaved);
   document.getElementById('mpCatalogFilter').addEventListener('change', mpRenderSaved);
+  let ovTimer;
+  document.getElementById('mpOvText').addEventListener('input', () => {
+    clearTimeout(ovTimer);
+    ovTimer = setTimeout(mpOnOverridePaste, 250);
+  });
+  document.getElementById('mpOvSave').addEventListener('click', () => mpSaveOverride(false));
+  document.getElementById('mpOvSaveAll').addEventListener('click', () => mpSaveOverride(true));
+  document.getElementById('mpOvClear').addEventListener('click', mpClearOverrideText);
+  document.getElementById('mpOvDelete').addEventListener('click', mpDeleteOverride);
   mpRenderAll();
 });
 
 if (typeof module !== 'undefined') {
-  module.exports = { mpParse, mpParsePrice };
+  module.exports = { mpParse, mpParsePrice, mpParseOverride, mpOverrideMap, mpMergeOverrideCountry, mpLoadOverrides };
 }
