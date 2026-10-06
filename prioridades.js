@@ -19,7 +19,8 @@ const prState = {
   commentCol: -1,
   noComment: false,
   pickedTicket: false,
-  pickedComment: false
+  pickedComment: false,
+  built: []
 };
 
 function prCountry(code) {
@@ -303,27 +304,27 @@ function prRefresh() {
   const hasNew = !!(document.getElementById('prNewText').value || '').trim();
   if (!hasCurrent && !hasNew) {
     out.innerHTML = '<div class="result-banner result-wait"><i class="bi bi-hourglass-split"></i><div><div class="result-title">AGUARDANDO</div><div class="result-sub">Cole a tabela atual e a tabela nova do país.</div></div></div>';
-    document.getElementById('prCopyText').value = '';
+    prState.built = [];
     return;
   }
   if (hasCurrent && !current.ok) {
     out.innerHTML = `<div class="result-banner result-fail"><i class="bi bi-x-circle-fill"></i><div><div class="result-title">FALHA NA TABELA ATUAL</div><div class="result-sub">${escapeHtml(current.error)}</div></div></div>`;
-    document.getElementById('prCopyText').value = '';
+    prState.built = [];
     return;
   }
   if (hasNew && !neu.ok) {
     out.innerHTML = `<div class="result-banner result-fail"><i class="bi bi-x-circle-fill"></i><div><div class="result-title">FALHA NA TABELA NOVA</div><div class="result-sub">${escapeHtml(neu.error)}</div></div></div>`;
-    document.getElementById('prCopyText').value = '';
+    prState.built = [];
     return;
   }
   if (!hasNew) {
     out.innerHTML = `<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>Tabela atual</strong><span>${current.rows.length} ticket(s) lido(s). Cole a tabela nova para montar.</span></div></div>`;
-    document.getElementById('prCopyText').value = '';
+    prState.built = [];
     return;
   }
   if (prState.ticketCol < 0) {
     out.innerHTML = '<div class="result-banner result-fail"><i class="bi bi-x-circle-fill"></i><div><div class="result-title">SEM TICKET</div><div class="result-sub">Não achei coluna com ticket (LC-123). Escolha a coluna do link/ticket.</div></div></div>';
-    document.getElementById('prCopyText').value = '';
+    prState.built = [];
     return;
   }
   if (!prState.noComment && prState.commentCol < 0 && prState.pickedComment === false) {
@@ -333,8 +334,7 @@ function prRefresh() {
   const extracted = prNewTickets(neu, prState.ticketCol, prState.noComment ? -1 : prState.commentCol, prState.noComment);
   const merged = prMerge(current.ok ? current.rows : [], extracted.rows, c.sub);
   const built = prBuildSheet(merged.rows, prState.startRow);
-  const tsv = prToTsv(built, false);
-  document.getElementById('prCopyText').value = tsv;
+  prState.built = built;
 
   const st = merged.stats;
   const shown = built.slice(0, PR_TABLE_ROWS);
@@ -368,28 +368,79 @@ function prRefresh() {
         <td class="muted">${escapeHtml(r.source)}${r.commentFrom ? ' · com. ' + r.commentFrom : ''}</td>
       </tr>`).join('')}</tbody></table></div>
       ${built.length > PR_TABLE_ROWS ? `<div class="muted small mt-2">Prévia: ${PR_TABLE_ROWS} de ${built.length} linhas. O copiar leva todas.</div>` : ''}
-      <div class="muted small mt-2">Status, Assignee, Link e Campaigns vão como fórmula. Ticket e Comentário vão como texto.</div>`;
+      <div class="muted small mt-2">Use <strong>Copiar linhas</strong> ou <strong>Baixar Excel</strong>. Colar o texto puro faz o Excel pôr <code>'</code> na frente da fórmula e ela não calcula.</div>`;
+}
+
+function prFormulaCells(built) {
+  return built.map(r => PR_OUT_COLUMNS.map(c => {
+    const v = r[c];
+    if (typeof v === 'string' && v.charAt(0) === '=') return 0;
+    if (c === 'Priority') return Number(v);
+    return v == null ? '' : v;
+  }));
+}
+
+function prApplyFormulas(ws, built) {
+  built.forEach((r, ri) => {
+    PR_OUT_COLUMNS.forEach((c, ci) => {
+      const v = r[c];
+      if (typeof v === 'string' && v.charAt(0) === '=') {
+        ws[XLSX.utils.encode_cell({ r: ri, c: ci })] = { t: 'n', f: v.replace(/^=/, ''), v: 0 };
+      }
+    });
+  });
+}
+
+function prFillTable(built) {
+  const table = document.createElement('table');
+  built.forEach(r => {
+    const tr = document.createElement('tr');
+    PR_OUT_COLUMNS.forEach(c => {
+      const td = document.createElement('td');
+      td.textContent = String(r[c] ?? '');
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+  return table;
+}
+
+function prCopied(btn) {
+  const html = btn.innerHTML;
+  btn.textContent = 'Copiado';
+  setTimeout(() => { btn.innerHTML = html; }, 1500);
 }
 
 function prCopy() {
-  const tsv = document.getElementById('prCopyText').value;
-  if (!tsv.trim()) { alert('Nada para copiar. Cole as tabelas primeiro.'); return; }
-  const done = () => {
-    const b = document.getElementById('prCopy');
-    b.textContent = 'Copiado';
-    setTimeout(() => { b.innerHTML = '<i class="bi bi-clipboard"></i> Copiar linhas'; }, 1500);
-  };
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(tsv).then(done).catch(() => {
-      document.getElementById('prCopyText').select();
-      document.execCommand('copy');
-      done();
-    });
-  } else {
-    document.getElementById('prCopyText').select();
-    document.execCommand('copy');
-    done();
-  }
+  const built = prState.built;
+  if (!built || !built.length) { alert('Nada para copiar. Cole as tabelas primeiro.'); return; }
+  const btn = document.getElementById('prCopy');
+  const host = document.getElementById('prClip');
+  host.innerHTML = '';
+  host.appendChild(prFillTable(built));
+  const table = host.querySelector('table');
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNode(table);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  sel.removeAllRanges();
+  host.innerHTML = '';
+  if (ok) { prCopied(btn); return; }
+  alert('Não deu para copiar como tabela. Use Baixar Excel.');
+}
+
+function prDownloadXlsx() {
+  const built = prState.built;
+  if (!built || !built.length) { alert('Nada para baixar. Cole as tabelas primeiro.'); return; }
+  if (typeof XLSX === 'undefined') { alert('Biblioteca de Excel não carregou.'); return; }
+  const ws = XLSX.utils.aoa_to_sheet(prFormulaCells(built));
+  prApplyFormulas(ws, built);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Prioridades');
+  XLSX.writeFile(wb, 'prioridades.xlsx');
 }
 
 function prClear() {
@@ -400,6 +451,7 @@ function prClear() {
   prState.noComment = false;
   prState.pickedTicket = false;
   prState.pickedComment = false;
+  prState.built = [];
   prRefresh();
 }
 
@@ -426,6 +478,7 @@ if (typeof document !== 'undefined') {
       prRefresh();
     });
     document.getElementById('prCopy').addEventListener('click', prCopy);
+    document.getElementById('prXlsx').addEventListener('click', prDownloadXlsx);
     document.getElementById('prClear').addEventListener('click', prClear);
     prRefresh();
   });

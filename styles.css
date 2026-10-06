@@ -387,6 +387,14 @@ h1 {
 .cell-bad { color: #fca5a5; font-weight: 700; }
 .status-good { color: #6ee7b7; font-weight: 600; }
 .status-bad { color: #fca5a5; font-weight: 600; white-space: normal; }
+.pr-clip {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
 .table-wrap td.pr-formula {
   max-width: 220px;
   font-size: .75rem;

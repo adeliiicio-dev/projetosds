@@ -262,12 +262,11 @@
           </div>
           <div class="d-flex flex-wrap gap-2 mb-3">
             <button class="btn btn-samsung" id="prCopy"><i class="bi bi-clipboard"></i> Copiar linhas</button>
+            <button class="btn btn-outline-secondary" id="prXlsx"><i class="bi bi-download"></i> Baixar Excel</button>
             <button class="btn btn-outline-secondary" id="prClear"><i class="bi bi-x-circle"></i> Limpar</button>
           </div>
           <div id="prResult"></div>
-          <label class="form-label mt-3" for="prCopyText">Texto para colar no Excel (sem cabeçalho)</label>
-          <textarea id="prCopyText" class="form-control pumi-textarea" rows="5" readonly spellcheck="false"
-            placeholder="As linhas prontas aparecem aqui..."></textarea>
+          <div id="prClip" class="pr-clip" aria-hidden="true"></div>
         </div>
       </section>
 
