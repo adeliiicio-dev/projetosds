@@ -55,7 +55,7 @@
           <i class="bi bi-arrow-left"></i> Voltar
         </button>
         <h1>Triagem - Special price</h1>
-        <p class="subtitle">Escolha o país e o site, cole o e-mail PUMI e anexe o template Excel.</p>
+        <p class="subtitle">Escolha o país e o site, cole o e-mail PUMI e a planilha do template.</p>
 
         <div class="country-tabs" id="spCountryTabs"></div>
 
@@ -85,33 +85,10 @@
             <i class="bi bi-file-earmark-excel text-accent fs-4"></i>
             <h4 class="m-0">Template</h4>
           </div>
-          <p class="muted mb-3">Anexe o template Excel (.xlsx, .xls). Colunas: modelCode, price, currency, unit, cmsSite, minqtd, discountPercent, userPriceGroup, validityFrom, validityTo.</p>
+          <p class="muted mb-3">Abra o template no Excel, selecione tudo (Ctrl+A), copie (Ctrl+C) e cole abaixo (Ctrl+V), com o cabeçalho. Colunas: modelCode, price, currency, unit, cmsSite, minqtd, discountPercent, userPriceGroup, validityFrom, validityTo.</p>
 
-          <div class="dropzone" id="templateDrop" tabindex="0">
-            <i class="bi bi-cloud-arrow-up"></i>
-            <div><strong>Arraste o Excel aqui</strong> ou clique para selecionar</div>
-            <small class="muted">.xlsx, .xls, .xlsm</small>
-            <input type="file" id="templateInput" accept=".xlsx,.xls,.xlsm" hidden />
-          </div>
-
-          <div id="templateInfo" class="file-info d-none"></div>
-
-          <div id="templatePreview" class="d-none mt-3">
-            <div class="d-flex flex-wrap align-items-end gap-3 mb-2">
-              <div>
-                <label class="form-label mb-1" for="sheetSelect">Aba</label>
-                <select id="sheetSelect" class="form-select form-select-sm"></select>
-              </div>
-              <div id="sheetStats" class="muted small"></div>
-            </div>
-            <details>
-              <summary class="muted mb-2">Ver planilha como foi lida</summary>
-              <div class="table-wrap">
-                <table class="table table-sm table-dark table-bordered mb-0" id="previewTable"></table>
-              </div>
-              <div class="muted small mt-2" id="previewNote"></div>
-            </details>
-          </div>
+          <textarea id="templateText" class="form-control pumi-textarea" rows="8"
+            placeholder="Cole aqui a planilha do template (com o cabeçalho)..." spellcheck="false"></textarea>
 
           <div id="spTemplateResult"></div>
         </div>

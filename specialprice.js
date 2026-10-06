@@ -93,6 +93,7 @@ function spParseDate(v) {
 
   const s = String(v).trim();
   if (!s) return { empty: true };
+  if (/^\d{5}(\.\d+)?$/.test(s)) return spParseDate(Number(s)); // número de série do Excel colado como texto
   const time = '(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?';
   let m, y, mo, d, h, mi, se;
 
@@ -115,26 +116,30 @@ function spParseDate(v) {
 
 /* ---------- Leitura do template ---------- */
 
-function spParseTemplate(workbook, sheetName) {
-  const ws = workbook.Sheets[sheetName];
-  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '', blankrows: true });
-  const offset = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).s.r : 0;
+// Lê o texto colado do Excel (colunas separadas por tabulação). "line" = linha do texto colado.
+function spParseTemplate(text) {
+  const lines = text.replace(/\r/g, '').split('\n').map((content, i) => ({ content, line: i + 1 }));
 
-  let headerIdx = -1;
-  for (let i = 0; i < Math.min(aoa.length, 10); i++) {
-    if (aoa[i].some(c => mpNormKey(c) === 'modelcode')) { headerIdx = i; break; }
+  let headerIdx = -1, delim = '\t';
+  for (let i = 0; i < Math.min(lines.length, 10); i++) {
+    const d = mpDetectDelimiter(lines[i].content);
+    if (lines[i].content.split(d).some(c => mpNormKey(mpStripQuotes(c)) === 'modelcode')) {
+      headerIdx = i; delim = d; break;
+    }
   }
   if (headerIdx < 0) return { headerFound: false, columns: {}, missing: ['modelCode (cabeçalho não encontrado)'], rows: [] };
 
-  const norm = aoa[headerIdx].map(mpNormKey);
+  const norm = lines[headerIdx].content.split(delim).map(c => mpNormKey(mpStripQuotes(c)));
   const columns = {};
   SP_COLUMNS.forEach(c => { columns[c] = norm.indexOf(mpNormKey(c)); });
   const missing = SP_REQUIRED.filter(c => columns[c] < 0);
 
   const rows = [];
-  aoa.slice(headerIdx + 1).forEach((cells, i) => {
-    if (!cells.some(c => String(c).trim() !== '')) return;
-    rows.push({ line: offset + headerIdx + 1 + i + 1, cells });
+  lines.slice(headerIdx + 1).forEach(({ content, line }) => {
+    if (!content.trim()) return;
+    const cells = content.split(delim).map(c => mpStripQuotes(c));
+    if (!cells.some(c => c !== '')) return; // linha só de tabulações
+    rows.push({ line, cells });
   });
   return { headerFound: true, columns, missing, rows };
 }
@@ -257,8 +262,7 @@ function spRunTemplate() {
 
   if (!state.template) { box.innerHTML = ''; return; }
 
-  const sheetName = document.getElementById('sheetSelect').value || state.template.workbook.SheetNames[0];
-  const parsed = spParseTemplate(state.template.workbook, sheetName);
+  const parsed = spParseTemplate(state.template.text);
   const info = spSiteInfo();
   const c = spCountry();
 

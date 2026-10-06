@@ -14,7 +14,7 @@ function showScreen(name, menuItem) {
 /* ===== Estado ===== */
 const state = {
   pumi: null,      // { text, result }
-  template: null   // { file, workbook }
+  template: null   // { text }
 };
 
 /* ===== Utilidades ===== */
@@ -135,78 +135,11 @@ function handlePumiText() {
   updateStartButton();
 }
 
-/* ===== Template (Excel) ===== */
-const PREVIEW_MAX_ROWS = 100;
-
-function renderSheet(sheetName) {
-  const { workbook } = state.template;
-  const ws = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
-  const maxCols = rows.reduce((m, r) => Math.max(m, r.length), 0);
-
-  document.getElementById('sheetStats').textContent =
-    `${rows.length} linhas × ${maxCols} colunas`;
-
-  const table = document.getElementById('previewTable');
-  const shown = rows.slice(0, PREVIEW_MAX_ROWS);
-  const head = '<thead><tr><th>#</th>' +
-    Array.from({ length: maxCols }, (_, i) => `<th>${XLSX.utils.encode_col(i)}</th>`).join('') +
-    '</tr></thead>';
-  const bodyHtml = '<tbody>' + shown.map((r, i) =>
-    `<tr><td class="muted">${i + 1}</td>` +
-    Array.from({ length: maxCols }, (_, c) => `<td title="${escapeHtml(r[c])}">${escapeHtml(r[c])}</td>`).join('') +
-    '</tr>').join('') + '</tbody>';
-  table.innerHTML = head + bodyHtml;
-
-  document.getElementById('previewNote').textContent =
-    rows.length > PREVIEW_MAX_ROWS ? `Mostrando as primeiras ${PREVIEW_MAX_ROWS} linhas.` : '';
-}
-
-function renderTemplate() {
-  const info = document.getElementById('templateInfo');
-  const zone = document.getElementById('templateDrop');
-  const preview = document.getElementById('templatePreview');
-
-  if (!state.template) {
-    info.classList.add('d-none');
-    preview.classList.add('d-none');
-    zone.classList.remove('has-file');
-    return;
-  }
-  const { file, workbook } = state.template;
-  zone.classList.add('has-file');
-  info.classList.remove('d-none');
-  info.innerHTML = `
-    <dl>
-      <dt>Arquivo</dt><dd>${escapeHtml(file.name)} (${formatSize(file.size)})</dd>
-      <dt>Abas</dt><dd>${workbook.SheetNames.map(escapeHtml).join(', ')}</dd>
-    </dl>`;
-
-  const select = document.getElementById('sheetSelect');
-  select.innerHTML = workbook.SheetNames
-    .map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
-  preview.classList.remove('d-none');
-  renderSheet(workbook.SheetNames[0]);
-}
-
-async function handleTemplate(file) {
-  if (!hasExt(file, ['.xlsx', '.xls', '.xlsm'])) {
-    alert('Formato inválido. Use .xlsx, .xls ou .xlsm.');
-    return;
-  }
-  if (typeof XLSX === 'undefined') {
-    alert('Biblioteca de Excel não carregou. Verifique a conexão com a internet.');
-    return;
-  }
-  try {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-    state.template = { file, workbook };
-    renderTemplate();
-    updateStartButton();
-  } catch (err) {
-    alert('Não foi possível ler o Excel: ' + err.message);
-  }
+/* ===== Template (colado como texto) ===== */
+function handleTemplateText() {
+  const text = cleanInvisible(document.getElementById('templateText').value);
+  state.template = text.trim() ? { text } : null;
+  updateStartButton();
 }
 
 /* ===== Ações ===== */
@@ -214,9 +147,8 @@ function clearAll() {
   state.pumi = null;
   state.template = null;
   document.getElementById('pumiText').value = '';
-  document.getElementById('templateInput').value = '';
+  document.getElementById('templateText').value = '';
   renderPumi();
-  renderTemplate();
   updateStartButton();
 }
 
@@ -226,11 +158,10 @@ document.addEventListener('DOMContentLoaded', () => {
     clearTimeout(pumiTimer);
     pumiTimer = setTimeout(handlePumiText, 250);
   });
-  setupDropzone('templateDrop', 'templateInput', handleTemplate);
-
-  document.getElementById('sheetSelect').addEventListener('change', e => {
-    renderSheet(e.target.value);
-    updateStartButton();
+  let templateTimer;
+  document.getElementById('templateText').addEventListener('input', () => {
+    clearTimeout(templateTimer);
+    templateTimer = setTimeout(handleTemplateText, 250);
   });
   document.getElementById('btnLimpar').addEventListener('click', clearAll);
 });
