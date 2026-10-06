@@ -22,6 +22,9 @@
       <button class="side-button" data-screen="prioridades" onclick="showScreen('prioridades')">
         <i class="bi bi-list-ol"></i> Lista de prioridades
       </button>
+          <button class="side-button" data-screen="minimum-prices" onclick="showScreen('minimum-prices')">
+        <i class="bi bi-currency-dollar"></i> Minimum prices
+      </button>
     </aside>
 
     <!-- Conteúdo -->
@@ -110,6 +113,54 @@
         </div>
       </section>
 
+      <!-- Minimum prices -->
+      <section id="screen-minimum-prices" class="screen">
+        <h1>Minimum prices</h1>
+        <p class="subtitle">Escolha o país, cole a planilha de preço mínimo do dia e confira como o sistema reconheceu antes de salvar.</p>
+
+        <div class="country-tabs" id="mpTabs"></div>
+
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-table text-accent fs-4"></i>
+            <h4 class="m-0" id="mpCardTitle">Planilha do dia</h4>
+          </div>
+          <p class="muted mb-3">Abra a planilha, selecione tudo (Ctrl+A), copie (Ctrl+C) e cole abaixo (Ctrl+V). Colunas: modelCode, modelName, category, unit, minQuantityToPurchase, catalogVersion, minProductPrice.</p>
+
+          <textarea id="mpText" class="form-control pumi-textarea" rows="7"
+            placeholder="Cole aqui a planilha do país selecionado..." spellcheck="false"></textarea>
+
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <button class="btn btn-samsung" id="mpSave" disabled><i class="bi bi-save"></i> Salvar planilha</button>
+            <button class="btn btn-outline-secondary" id="mpClear"><i class="bi bi-x-circle"></i> Limpar campo</button>
+          </div>
+
+          <div id="mpSaveProof"></div>
+          <div id="mpRecognition" class="mt-3"></div>
+        </div>
+
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-database-check text-accent fs-4"></i>
+            <h4 class="m-0">Resumo salvo por país</h4>
+          </div>
+          <div class="saved-cards" id="mpSavedCards"></div>
+        </div>
+
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-search text-accent fs-4"></i>
+            <h4 class="m-0" id="mpSavedTitle">Dados salvos</h4>
+          </div>
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <input type="text" id="mpFilter" class="form-control form-control-sm" style="max-width: 320px"
+              placeholder="Filtrar por modelCode ou modelName..." />
+            <button class="btn btn-sm btn-outline-danger" id="mpDelete"><i class="bi bi-trash"></i> Apagar dados do país</button>
+          </div>
+          <div id="mpSavedTable"></div>
+        </div>
+      </section>
+
       <!-- Lista de prioridades -->
       <section id="screen-prioridades" class="screen">
         <h1>Lista de prioridades</h1>
@@ -123,6 +174,7 @@
   <script src="vendor/xlsx.full.min.js"></script>
   <script src="vendor/msgreader.bundle.js"></script>
   <script src="pumi.js"></script>
+  <script src="minprices.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

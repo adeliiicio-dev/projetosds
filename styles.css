@@ -313,3 +313,47 @@ h1 {
   resize: vertical;
   min-height: 160px;
 }
+
+/* Minimum prices */
+.country-tabs { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+.country-tab {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  min-width: 150px; padding: 12px 16px;
+  background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px;
+  color: var(--text-main); cursor: pointer; transition: all .2s ease; text-align: left;
+}
+.country-tab:hover { border-color: var(--accent-primary); background: #16215a; }
+.country-tab.active { background: var(--samsung-blue); border-color: var(--accent-primary); }
+.country-tab-code { font-size: .72rem; font-weight: 800; letter-spacing: .08em; color: var(--accent-primary); }
+.country-tab.active .country-tab-code { color: #fff; opacity: .85; }
+.country-tab-name { font-weight: 700; font-size: 1.05rem; }
+.country-tab-status { font-size: .78rem; color: var(--text-muted); }
+.country-tab-status.saved { color: #6ee7b7; }
+.country-tab.active .country-tab-status { color: #fff; opacity: .9; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.stat { background: var(--card-soft); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 12px; }
+.stat span { display: block; font-size: .75rem; color: var(--text-muted); }
+.stat strong { font-size: 1.2rem; }
+.stat-ok strong { color: #6ee7b7; }
+.stat-fail strong { color: #fca5a5; }
+
+.col-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.col-chip { border: 1px solid var(--border-color); border-left-width: 4px; border-radius: 8px; padding: 8px 10px; background: var(--card-soft); }
+.col-chip strong { display: block; font-size: .88rem; }
+.col-chip span { font-size: .78rem; color: var(--text-muted); }
+.chip-ok { border-left-color: var(--accent-success); }
+.chip-warn { border-left-color: #fbbf24; }
+.chip-fail { border-left-color: var(--accent-danger); }
+.chip-fail span { color: #fca5a5; }
+
+.price-read { color: #6ee7b7; font-weight: 700; text-align: right; }
+
+.saved-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.saved-card { background: var(--card-soft); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px; }
+.saved-card.active { border-color: var(--accent-primary); box-shadow: 0 0 0 1px var(--accent-primary); }
+.saved-card.empty { opacity: .7; }
+.saved-card-head { display: flex; justify-content: space-between; align-items: center; }
+.saved-card-head span { font-size: .72rem; font-weight: 800; color: var(--accent-primary); letter-spacing: .08em; }
+.saved-card-count { font-size: 1.8rem; font-weight: 800; color: #6ee7b7; }
+.saved-card-count small { font-size: .85rem; color: var(--text-muted); font-weight: 500; }
