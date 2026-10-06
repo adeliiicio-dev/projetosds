@@ -166,7 +166,9 @@ async function readMsg(buffer) {
       subject: d.subject || '',
       date: d.messageDeliveryTime || d.creationTime || d.clientSubmitTime || ''
     };
-    const text = [meta.from, meta.to, meta.subject, d.headers || '', d.body || '', html ? htmlToText(html) : ''].join('\n');
+    // Texto estruturado + varredura do binário (pega conteúdo que a biblioteca não expõe).
+    const text = [meta.from, meta.to, meta.subject, d.headers || '', d.body || '',
+      html ? htmlToText(html) : '', scanBinaryStrings(buffer)].join('\n');
     return { meta, text, note: '' };
   } catch (err) {
     console.warn('msgreader indisponível, usando leitura simplificada:', err);
@@ -201,13 +203,42 @@ function countMatches(folded, regex) {
   return (folded.match(new RegExp(regex.source, 'g')) || []).length;
 }
 
-function approverRegex(name) {
+// Acha o aprovador por primeiro + último nome, em qualquer ordem, próximos entre si.
+// Cobre: "Felipe Mello Sobreira", "Sobreira, Felipe", "felipe.sobreira@...", "Felipe M. Sobreira".
+function findApprover(flat, folded, name, radius = 70, max = 2) {
   const tokens = foldText(name).split(/\s+/).filter(Boolean);
-  const sep = '[\\W_]{1,6}';
-  const forward = tokens.join(sep);
-  // "Sobreira, Felipe Mello": último nome primeiro.
-  const reversed = [tokens[tokens.length - 1], ...tokens.slice(0, -1)].join(sep);
-  return new RegExp(`(?:${forward})|(?:${reversed})`);
+  const required = tokens.length > 1 ? [tokens[0], tokens[tokens.length - 1]] : tokens;
+  const span = tokens.length + 4; // janela em palavras
+
+  const words = [];
+  const re = /[a-z0-9]+/g;
+  let m;
+  while ((m = re.exec(folded))) words.push({ w: m[0], start: m.index, end: m.index + m[0].length });
+
+  let count = 0;
+  const snippets = [];
+  for (let i = 0; i < words.length; i++) {
+    if (!required.includes(words[i].w)) continue;
+    const seen = new Set([words[i].w]);
+    let last = i;
+    for (let j = i + 1; j < Math.min(words.length, i + span) && seen.size < required.length; j++) {
+      if (required.includes(words[j].w)) { seen.add(words[j].w); last = j; }
+    }
+    if (seen.size < required.length) continue;
+
+    count++;
+    if (snippets.length < max) {
+      const s = words[i].start, e = words[last].end;
+      const from = Math.max(0, s - radius), to = Math.min(flat.length, e + radius);
+      snippets.push({
+        before: (from > 0 ? '…' : '') + flat.slice(from, s),
+        match: flat.slice(s, e),
+        after: flat.slice(e, to) + (to < flat.length ? '…' : '')
+      });
+    }
+    i = last; // evita contar a mesma ocorrência duas vezes
+  }
+  return { count, snippets };
 }
 
 function checkPumi(rawText) {
@@ -215,8 +246,8 @@ function checkPumi(rawText) {
   const folded = foldText(flat);
 
   const approvers = PUMI_APPROVERS.map(name => {
-    const re = approverRegex(name);
-    return { name, count: countMatches(folded, re), snippets: snippetsFor(flat, folded, re, 70, 2) };
+    const { count, snippets } = findApprover(flat, folded, name);
+    return { name, count, snippets };
   });
   const foundApprovers = approvers.filter(a => a.count > 0);
 
