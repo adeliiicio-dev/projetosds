@@ -3,7 +3,9 @@ function showScreen(name, menuItem) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById('screen-' + name);
   if (target) target.classList.add('active');
-  if (name === 'special-price' && typeof spRefresh === 'function') spRefresh(); // pega dados novos de Minimum prices
+  if (name === 'special-price' && typeof spRefresh === 'function') spRefresh();
+  if (name === 'voucher' && typeof vcRefresh === 'function') vcRefresh();
+  if (name === 'prioridades' && typeof prRefresh === 'function') prRefresh();
 
   const active = menuItem || name;
   document.querySelectorAll('.side-button').forEach(b => {
@@ -18,41 +20,10 @@ const state = {
 };
 
 /* ===== Utilidades ===== */
-function formatSize(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / 1024 / 1024).toFixed(2) + ' MB';
-}
-
 function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, c => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
-}
-
-function setupDropzone(zoneId, inputId, onFile) {
-  const zone = document.getElementById(zoneId);
-  const input = document.getElementById(inputId);
-
-  zone.addEventListener('click', () => input.click());
-  zone.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
-  });
-  input.addEventListener('change', () => {
-    if (input.files[0]) onFile(input.files[0]);
-  });
-  ['dragenter', 'dragover'].forEach(ev =>
-    zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('dragover'); }));
-  ['dragleave', 'drop'].forEach(ev =>
-    zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('dragover'); }));
-  zone.addEventListener('drop', e => {
-    if (e.dataTransfer.files[0]) onFile(e.dataTransfer.files[0]);
-  });
-}
-
-function hasExt(file, exts) {
-  const name = file.name.toLowerCase();
-  return exts.some(x => name.endsWith(x));
 }
 
 // Atualiza a conferência do template e o resultado geral (specialprice.js).
@@ -117,103 +88,20 @@ function renderPumiResult(result) {
     })}`;
 }
 
-function formatPartLine(p) {
-  return [p.type || '(sem tipo)', p.encoding, p.charset && 'charset ' + p.charset,
-    p.size != null && formatSize(p.size), p.chars != null && p.chars + ' caracteres', p.status]
-    .filter(Boolean).join(' · ') + (p.preview ? '\n   início: ' + p.preview : '');
-}
-
 function renderPumi() {
-  const info = document.getElementById('pumiInfo');
   const resultBox = document.getElementById('pumiResult');
-  const zone = document.getElementById('pumiDrop');
-  if (!state.pumi) {
-    info.classList.add('d-none');
-    info.innerHTML = '';
+  if (!state.pumi || !state.pumi.result) {
     resultBox.classList.add('d-none');
     resultBox.innerHTML = '';
-    zone.classList.remove('has-file');
     return;
   }
-
-  const { file, meta, text, note, result, partsInfo, unreadable } = state.pumi;
-  if (file) zone.classList.add('has-file');
-  else zone.classList.remove('has-file');
-
-  if (file || (meta && (meta.from || meta.subject))) {
-    info.classList.remove('d-none');
-    info.innerHTML = `
-      <dl>
-        ${file ? `<dt>Arquivo</dt><dd>${escapeHtml(file.name)} (${formatSize(file.size)})</dd>` : '<dt>Origem</dt><dd>Texto colado</dd>'}
-        ${meta && meta.from ? `<dt>De</dt><dd>${escapeHtml(meta.from)}</dd>` : ''}
-        ${meta && meta.to ? `<dt>Para</dt><dd>${escapeHtml(meta.to)}</dd>` : ''}
-        ${meta && meta.subject ? `<dt>Assunto</dt><dd>${escapeHtml(meta.subject)}</dd>` : ''}
-        ${meta && meta.date ? `<dt>Data</dt><dd>${escapeHtml(String(meta.date))}</dd>` : ''}
-        <dt>Conferência</dt><dd>Só o corpo do e-mail. Anexos e cabeçalhos (De/Para/Cc) ficam de fora.</dd>
-        ${note ? `<dt>Obs.</dt><dd class="text-warning">${escapeHtml(note)}</dd>` : ''}
-      </dl>`;
-  } else {
-    info.classList.add('d-none');
-    info.innerHTML = '';
-  }
-
   resultBox.classList.remove('d-none');
-  if (!result) {
-    resultBox.innerHTML = `
-      <div class="result-banner result-fail">
-        <i class="bi bi-exclamation-triangle-fill"></i>
-        <div>
-          <div class="result-title">NÃO FOI POSSÍVEL LER O ARQUIVO</div>
-          <div class="result-sub">${escapeHtml(unreadable || note || 'Sem texto no corpo do e-mail.')}</div>
-        </div>
-      </div>`;
-    return;
-  }
-
-  const extras = `
-    <details class="mt-3">
-      <summary class="muted">Ver texto lido do corpo</summary>
-      <div class="email-body">${escapeHtml(flattenSpaces(text || '').slice(0, 20000))}</div>
-    </details>
-    ${partsInfo && partsInfo.length ? `
-    <details class="mt-2">
-      <summary class="muted">Ver estrutura do e-mail (partes lidas e anexos ignorados)</summary>
-      <div class="email-body">${partsInfo.map(p => escapeHtml(formatPartLine(p))).join('\n\n')}</div>
-    </details>` : ''}`;
-  resultBox.innerHTML = renderPumiResult(result) + extras;
-}
-
-async function handlePumi(file) {
-  if (!hasExt(file, ['.eml', '.msg'])) {
-    alert('Formato inválido. Use .eml ou .msg.');
-    return;
-  }
-  try {
-    const { meta, text, searchText, note, partsInfo, unreadable } = await readPumiFile(file);
-    document.getElementById('pumiText').value = '';
-    state.pumi = {
-      file, meta, text, note, unreadable, partsInfo: partsInfo || [],
-      result: unreadable ? null : checkPumi(searchText || text)
-    };
-    renderPumi();
-    updateStartButton();
-  } catch (err) {
-    alert('Não foi possível ler o e-mail: ' + err.message);
-  }
+  resultBox.innerHTML = renderPumiResult(state.pumi.result);
 }
 
 function handlePumiText() {
   const text = cleanInvisible(document.getElementById('pumiText').value);
-  if (!text.trim()) {
-    if (state.pumi && state.pumi.file) return;
-    state.pumi = null;
-    renderPumi();
-    updateStartButton();
-    return;
-  }
-  const input = document.getElementById('pumiInput');
-  if (input) input.value = '';
-  state.pumi = { text, result: checkPumi(text) };
+  state.pumi = text.trim() ? { text, result: checkPumi(text) } : null;
   renderPumi();
   updateStartButton();
 }
@@ -230,14 +118,12 @@ function clearAll() {
   state.pumi = null;
   state.template = null;
   document.getElementById('pumiText').value = '';
-  document.getElementById('pumiInput').value = '';
   document.getElementById('templateText').value = '';
   renderPumi();
   updateStartButton();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  setupDropzone('pumiDrop', 'pumiInput', handlePumi);
   let pumiTimer;
   document.getElementById('pumiText').addEventListener('input', () => {
     clearTimeout(pumiTimer);

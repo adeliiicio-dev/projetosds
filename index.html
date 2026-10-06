@@ -46,6 +46,16 @@
               <i class="bi bi-chevron-right tipo-card-arrow"></i>
             </button>
           </div>
+          <div class="col-12 col-md-6 col-xl-4">
+            <button class="tipo-card" onclick="showScreen('voucher', 'triagem')">
+              <span class="tipo-card-icon"><i class="bi bi-ticket-perforated"></i></span>
+              <span class="tipo-card-body">
+                <strong>Voucher</strong>
+                <small>Conferência de voucher a partir do e-mail PUMI e da planilha do template.</small>
+              </span>
+              <i class="bi bi-chevron-right tipo-card-arrow"></i>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -55,7 +65,7 @@
           <i class="bi bi-arrow-left"></i> Voltar
         </button>
         <h1>Triagem - Special price</h1>
-        <p class="subtitle">Escolha o país e o site, anexe o e-mail PUMI (.eml ou .msg) e cole a planilha do template.</p>
+        <p class="subtitle">Escolha o país e o site, cole o e-mail PUMI e a planilha do template.</p>
 
         <div class="country-tabs" id="spCountryTabs"></div>
 
@@ -71,23 +81,12 @@
             <i class="bi bi-envelope-paper text-accent fs-4"></i>
             <h4 class="m-0">PUMI</h4>
           </div>
-          <p class="muted mb-3">Anexe o arquivo do e-mail (.eml ou .msg). O sistema lê só o corpo, ignora anexos e cabeçalhos (De/Para/Cc), e confere os aprovadores e se não há "pending".</p>
+          <p class="muted mb-3">Abra o e-mail, selecione tudo (Ctrl+A), copie (Ctrl+C) e cole abaixo (Ctrl+V). O sistema confere os aprovadores e se não há "pending".</p>
 
-          <div class="dropzone" id="pumiDrop" tabindex="0">
-            <i class="bi bi-cloud-arrow-up"></i>
-            <div><strong>Arraste o e-mail aqui</strong> ou clique para selecionar</div>
-            <small class="muted">.eml, .msg</small>
-            <input type="file" id="pumiInput" accept=".eml,.msg" hidden />
-          </div>
+          <textarea id="pumiText" class="form-control pumi-textarea" rows="8"
+            placeholder="Cole aqui o conteúdo do e-mail (PUMI)..." spellcheck="false"></textarea>
 
-          <div id="pumiInfo" class="file-info d-none"></div>
           <div id="pumiResult" class="mt-3 d-none"></div>
-
-          <details class="mt-3 pumi-paste">
-            <summary class="muted">Ou cole o texto do e-mail</summary>
-            <textarea id="pumiText" class="form-control pumi-textarea mt-2" rows="6"
-              placeholder="Cole aqui o conteúdo visível do e-mail (PUMI)..." spellcheck="false"></textarea>
-          </details>
         </div>
 
         <!-- Template -->
@@ -114,6 +113,55 @@
 
         <div class="d-flex gap-2">
           <button class="btn btn-outline-secondary" id="btnLimpar">
+            <i class="bi bi-x-circle"></i> Limpar
+          </button>
+        </div>
+      </section>
+
+      <!-- Triagem: Voucher -->
+      <section id="screen-voucher" class="screen">
+        <button class="btn btn-sm btn-outline-secondary mb-3" onclick="showScreen('triagem')">
+          <i class="bi bi-arrow-left"></i> Voltar
+        </button>
+        <h1>Triagem - Voucher</h1>
+        <p class="subtitle">Cole o e-mail PUMI e a planilha do voucher.</p>
+
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-envelope-paper text-accent fs-4"></i>
+            <h4 class="m-0">PUMI</h4>
+          </div>
+          <p class="muted mb-3">Abra o e-mail, selecione tudo (Ctrl+A), copie (Ctrl+C) e cole abaixo (Ctrl+V). O sistema confere os aprovadores e se não há "pending".</p>
+
+          <textarea id="vcPumiText" class="form-control pumi-textarea" rows="8"
+            placeholder="Cole aqui o conteúdo do e-mail (PUMI)..." spellcheck="false"></textarea>
+
+          <div id="vcPumiResult" class="mt-3 d-none"></div>
+        </div>
+
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-file-earmark-excel text-accent fs-4"></i>
+            <h4 class="m-0">Template</h4>
+          </div>
+          <p class="muted mb-3">Abra a planilha, selecione tudo (Ctrl+A), copie (Ctrl+C) e cole abaixo (Ctrl+V), com o cabeçalho. Conferência: Type of discount × Discounts/Price Value (ao lado), Start Date and Time × End Date and Time, e exibe Promotion message in the cart.</p>
+
+          <textarea id="vcTemplateText" class="form-control pumi-textarea" rows="8"
+            placeholder="Cole aqui a planilha do voucher (com o cabeçalho)..." spellcheck="false"></textarea>
+
+          <div id="vcTemplateResult"></div>
+        </div>
+
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-clipboard2-check text-accent fs-4"></i>
+            <h4 class="m-0">Resultado geral</h4>
+          </div>
+          <div id="vcOverall"></div>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary" id="btnVcLimpar">
             <i class="bi bi-x-circle"></i> Limpar
           </button>
         </div>
@@ -174,8 +222,53 @@
       <!-- Lista de prioridades -->
       <section id="screen-prioridades" class="screen">
         <h1>Lista de prioridades</h1>
-        <p class="subtitle">Em construção.</p>
-        <div class="section-card muted">Os detalhes desta tela serão definidos depois.</div>
+        <p class="subtitle">Cole a tabela atual do SharePoint e a tabela nova do país. A ferramenta monta a ordem (nova primeiro, o que sobrar da atual embaixo), junta os comentários e devolve as colunas com fórmulas para você colar.</p>
+
+        <div class="country-tabs" id="prTabs"></div>
+
+        <div class="d-flex flex-wrap gap-3 align-items-end mb-3">
+          <div>
+            <label class="form-label mb-1" for="prStartRow">Primeira linha no Excel</label>
+            <input type="number" id="prStartRow" class="form-control form-control-sm" min="1" value="2" style="width: 140px" />
+          </div>
+          <div class="muted small mb-1">Status/Assignee/Link/Campaigns usam essa linha em B (Ticket). Ex.: linha 2 → VLOOKUP(B2,…).</div>
+        </div>
+
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-table text-accent fs-4"></i>
+            <h4 class="m-0">Tabela atual</h4>
+          </div>
+          <p class="muted mb-3">Cole a lista que já está no SharePoint, com cabeçalho. Colunas: Sub, Ticket, Status, Assignee, Priority, Link, Comentário, Campaigns.</p>
+          <textarea id="prCurrentText" class="form-control pumi-textarea" rows="7"
+            placeholder="Cole aqui a tabela atual..." spellcheck="false"></textarea>
+        </div>
+
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-plus-square text-accent fs-4"></i>
+            <h4 class="m-0">Tabela nova (país)</h4>
+          </div>
+          <p class="muted mb-3">Cole o que o país mandou. O ticket sai do final do link Jira (depois da última /). Se houver comentário, escolha a coluna depois da leitura. Marque “Não tem comentário” se a nova não trouxer essa coluna.</p>
+          <textarea id="prNewText" class="form-control pumi-textarea" rows="7"
+            placeholder="Cole aqui a tabela nova..." spellcheck="false"></textarea>
+          <div id="prNewCols" class="mt-3"></div>
+        </div>
+
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-clipboard2-check text-accent fs-4"></i>
+            <h4 class="m-0">Planilha montada</h4>
+          </div>
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <button class="btn btn-samsung" id="prCopy"><i class="bi bi-clipboard"></i> Copiar linhas</button>
+            <button class="btn btn-outline-secondary" id="prClear"><i class="bi bi-x-circle"></i> Limpar</button>
+          </div>
+          <div id="prResult"></div>
+          <label class="form-label mt-3" for="prCopyText">Texto para colar no Excel (sem cabeçalho)</label>
+          <textarea id="prCopyText" class="form-control pumi-textarea" rows="5" readonly spellcheck="false"
+            placeholder="As linhas prontas aparecem aqui..."></textarea>
+        </div>
       </section>
 
     </main>
@@ -187,5 +280,7 @@
   <script src="minprices.js"></script>
   <script src="specialprice.js"></script>
   <script src="app.js"></script>
+  <script src="voucher.js"></script>
+  <script src="prioridades.js"></script>
 </body>
 </html>

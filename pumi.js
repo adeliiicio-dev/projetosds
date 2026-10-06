@@ -453,11 +453,20 @@ function checkPumi(rawText) {
 }
 
 // Identifica o tipo real do arquivo pelos primeiros bytes (não pela extensão).
+function asciiHead(bytes, n = 48) {
+  let s = '';
+  for (let i = 0; i < Math.min(bytes.length, n); i++) s += String.fromCharCode(bytes[i]);
+  return s;
+}
+
 function detectMagic(bytes) {
   const hex = Array.from(bytes.subarray(0, 16), b => b.toString(16).padStart(2, '0')).join(' ');
   const starts = (...sig) => sig.every((b, i) => bytes[i] === b);
   let kind = null, label = '';
-  if (starts(0xD0, 0xCF, 0x11, 0xE0)) { kind = 'ole'; label = 'formato .msg do Outlook'; }
+  if (/^<##\s*NASCA\s+DRM/i.test(asciiHead(bytes))) {
+    kind = 'nasca';
+    label = 'arquivo protegido pelo NASCA DRM da Samsung (Knox)';
+  } else if (starts(0xD0, 0xCF, 0x11, 0xE0)) { kind = 'ole'; label = 'formato .msg do Outlook'; }
   else if (starts(0x50, 0x4B, 0x03, 0x04)) { kind = 'zip'; label = 'arquivo compactado (ZIP)'; }
   else if (starts(0x1F, 0x8B)) { kind = 'gzip'; label = 'arquivo compactado (GZIP)'; }
   else if (starts(0x25, 0x50, 0x44, 0x46)) { kind = 'pdf'; label = 'PDF'; }
@@ -489,6 +498,15 @@ async function readPumiFile(file) {
     return r;
   }
   if (isMsgExt) return readMsg(buffer);
+
+  if (magic.kind === 'nasca') {
+    return {
+      meta: { from: '', to: '', cc: '', subject: '', date: '' },
+      text: '', searchText: '', partsInfo: [],
+      note: '',
+      unreadable: 'Este arquivo está criptografado pelo NASCA DRM da Samsung. O navegador lê o arquivo cru e não consegue descriptografar. Abra o e-mail no Outlook, copie o texto visível e cole em "Ou cole o texto do e-mail". Ou abra o .eml no Bloco de notas (o NASCA libera o texto no PC da empresa), salve uma cópia em outra pasta e anexe essa cópia.'
+    };
+  }
 
   const utf16 = bytes.length > 1 && ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF));
   let head = '';

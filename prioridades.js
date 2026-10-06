@@ -1,0 +1,438 @@
+/* ===== Lista de prioridades: montar planilha (tabela atual + tabela nova do país) ===== */
+
+const PR_COUNTRIES = [
+  { code: 'CO', name: 'Colômbia', sub: 'SAMCOL' },
+  { code: 'MX', name: 'México', sub: 'SEM' },
+  { code: 'CL', name: 'Chile', sub: 'SECH' },
+  { code: 'PE', name: 'Peru', sub: 'SEPR' }
+];
+
+const PR_OUT_COLUMNS = ['Sub', 'Ticket', 'Status', 'Assignee', 'Priority', 'Link', 'Comentário', 'Campaigns'];
+const PR_JIRA_LOOKUP = "'https://samsung.sharepoint.com/sites/COESDSLA/Shared Documents/GBA Documents & Files/Dashboards 2026/Dashboard CoE - TLC - TNE/[updateJira.xlsx]updateJira'!$A:$E";
+const PR_JIRA_BROWSE = 'https://jira.secext.samsung.net/browse/';
+const PR_TABLE_ROWS = 200;
+
+const prState = {
+  country: 'CO',
+  startRow: 2,
+  ticketCol: -1,
+  commentCol: -1,
+  noComment: false,
+  pickedTicket: false,
+  pickedComment: false
+};
+
+function prCountry(code) {
+  return PR_COUNTRIES.find(c => c.code === (code || prState.country));
+}
+
+function prNormKey(s) {
+  return foldText(String(s || '')).replace(/[^a-z0-9]/g, '');
+}
+
+function prExtractTicket(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const url = s.match(/https?:\/\/[^\s"'<>]+/i);
+  const path = (url ? url[0] : s).replace(/[?#].*$/, '');
+  const last = path.split('/').filter(Boolean).pop() || '';
+  const fromLast = last.match(/[A-Za-z][A-Za-z0-9]*-\d+/);
+  if (fromLast) return fromLast[0].toUpperCase();
+  const anywhere = s.match(/[A-Za-z][A-Za-z0-9]*-\d+/);
+  return anywhere ? anywhere[0].toUpperCase() : '';
+}
+
+function prSplitSheet(text) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n')
+    .map((content, i) => ({ content, line: i + 1 }))
+    .filter(l => l.content.trim() !== '');
+  if (!lines.length) return null;
+  const delim = mpDetectDelimiter(lines[0].content);
+  const rows = lines.map(({ content, line }) => ({
+    line,
+    cells: content.split(delim).map(c => mpStripQuotes(c))
+  }));
+  const width = rows.reduce((m, r) => Math.max(m, r.cells.length), 0);
+  rows.forEach(r => { while (r.cells.length < width) r.cells.push(''); });
+  return { delim, rows, width };
+}
+
+function prFindHeader(headers, aliases) {
+  const keys = aliases.map(prNormKey);
+  const norm = headers.map(prNormKey);
+  for (let i = 0; i < norm.length; i++) {
+    if (keys.some(k => norm[i] === k)) return i;
+  }
+  for (let i = 0; i < norm.length; i++) {
+    if (keys.some(k => k && norm[i].includes(k))) return i;
+  }
+  return -1;
+}
+
+function prScoreTicketCols(dataRows, width) {
+  const scores = Array.from({ length: width }, () => 0);
+  dataRows.forEach(r => {
+    for (let i = 0; i < width; i++) {
+      if (prExtractTicket(r.cells[i])) scores[i]++;
+    }
+  });
+  let idx = 0;
+  for (let i = 1; i < scores.length; i++) if (scores[i] > scores[idx]) idx = i;
+  return { idx: scores[idx] > 0 ? idx : -1, scores };
+}
+
+function prParseCurrent(text) {
+  const sheet = prSplitSheet(text);
+  if (!sheet) return { ok: false, error: 'Cole a tabela atual.', rows: [], headers: [] };
+  const first = sheet.rows[0].cells;
+  const ticketIdx = prFindHeader(first, ['ticket']);
+  if (ticketIdx < 0) return { ok: false, error: 'Cabeçalho "Ticket" não encontrado na tabela atual.', rows: [], headers: first };
+  const subIdx = prFindHeader(first, ['sub']);
+  const commentIdx = prFindHeader(first, ['comentario', 'comment', 'comments']);
+  const linkIdx = prFindHeader(first, ['link']);
+  const data = sheet.rows.slice(1);
+  const rows = [];
+  const seen = new Set();
+  data.forEach(r => {
+    const ticket = prExtractTicket(r.cells[ticketIdx]) || (linkIdx >= 0 ? prExtractTicket(r.cells[linkIdx]) : '');
+    if (!ticket) return;
+    if (seen.has(ticket)) return;
+    seen.add(ticket);
+    rows.push({
+      ticket,
+      sub: subIdx >= 0 ? String(r.cells[subIdx] || '').trim() : '',
+      comment: commentIdx >= 0 ? String(r.cells[commentIdx] || '').trim() : '',
+      line: r.line
+    });
+  });
+  return { ok: true, error: '', headers: first, rows, ticketIdx, commentIdx };
+}
+
+function prParseNew(text) {
+  const sheet = prSplitSheet(text);
+  if (!sheet) return { ok: false, error: 'Cole a tabela nova.', rows: [], headers: [], width: 0 };
+  const first = sheet.rows[0].cells;
+  const looksHeader = prFindHeader(first, ['ticket', 'link', 'comentario', 'comment', 'priority', 'assignee', 'status']) >= 0
+    || !prExtractTicket(first.join(' '));
+  const headerRow = looksHeader ? first : first.map((_, i) => 'Coluna ' + (i + 1));
+  const data = looksHeader ? sheet.rows.slice(1) : sheet.rows;
+  const scored = prScoreTicketCols(data, sheet.width);
+  const namedTicket = prFindHeader(headerRow, ['ticket', 'link', 'key', 'issue']);
+  const namedComment = prFindHeader(headerRow, ['comentario', 'comment', 'comments', 'notes', 'obs', 'observacao']);
+  let ticketCol = namedTicket >= 0 && scored.scores[namedTicket] > 0 ? namedTicket : scored.idx;
+  return {
+    ok: data.length > 0,
+    error: data.length ? '' : 'Nenhuma linha de dados na tabela nova.',
+    headers: headerRow,
+    data,
+    width: sheet.width,
+    ticketCol,
+    commentCol: namedComment,
+    scores: scored.scores,
+    hasHeader: looksHeader
+  };
+}
+
+function prNewTickets(parsed, ticketCol, commentCol, noComment) {
+  const seen = new Set();
+  const dups = [];
+  const rows = [];
+  parsed.data.forEach(r => {
+    const ticket = prExtractTicket(r.cells[ticketCol] || '');
+    if (!ticket) return;
+    if (seen.has(ticket)) { dups.push(ticket); return; }
+    seen.add(ticket);
+    const comment = (!noComment && commentCol >= 0) ? String(r.cells[commentCol] || '').trim() : '';
+    rows.push({ ticket, comment, line: r.line, raw: r.cells[ticketCol] });
+  });
+  return { rows, dups };
+}
+
+function prMerge(currentRows, newRows, sub) {
+  const oldMap = new Map();
+  currentRows.forEach(r => { if (!oldMap.has(r.ticket)) oldMap.set(r.ticket, r); });
+  const seen = new Set();
+  const out = [];
+  const stats = { fromNew: 0, overlap: 0, commentNew: 0, commentOld: 0, fromOld: 0 };
+
+  newRows.forEach(n => {
+    if (seen.has(n.ticket)) return;
+    seen.add(n.ticket);
+    const old = oldMap.get(n.ticket);
+    const hasNewComment = !!(n.comment && n.comment.trim());
+    const comment = hasNewComment ? n.comment : (old ? old.comment : '');
+    if (old) stats.overlap++;
+    else stats.fromNew++;
+    if (hasNewComment && old) stats.commentNew++;
+    else if (!hasNewComment && old && old.comment) stats.commentOld++;
+    out.push({
+      ticket: n.ticket,
+      sub,
+      comment,
+      source: old ? 'ambos' : 'nova',
+      commentFrom: hasNewComment ? 'nova' : (old && old.comment ? 'atual' : '')
+    });
+  });
+
+  currentRows.forEach(o => {
+    if (seen.has(o.ticket)) return;
+    seen.add(o.ticket);
+    stats.fromOld++;
+    out.push({
+      ticket: o.ticket,
+      sub: o.sub || sub,
+      comment: o.comment,
+      source: 'atual',
+      commentFrom: o.comment ? 'atual' : ''
+    });
+  });
+
+  return { rows: out, stats };
+}
+
+function prFormulaStatus(row) { return `=VLOOKUP(B${row},${PR_JIRA_LOOKUP},3,0)`; }
+function prFormulaAssignee(row) { return `=VLOOKUP(B${row},${PR_JIRA_LOOKUP},2,0)`; }
+function prFormulaLink(row) {
+  return `=HYPERLINK(IF(B${row}="","",CONCATENATE("${PR_JIRA_BROWSE}",B${row})))`;
+}
+function prFormulaCampaigns(row) { return `=VLOOKUP(B${row},${PR_JIRA_LOOKUP},5,0)`; }
+
+function prBuildSheet(merged, startRow) {
+  const start = Math.max(1, Number(startRow) || 2);
+  return merged.map((r, i) => {
+    const excelRow = start + i;
+    return {
+      excelRow,
+      Sub: r.sub,
+      Ticket: r.ticket,
+      Status: prFormulaStatus(excelRow),
+      Assignee: prFormulaAssignee(excelRow),
+      Priority: i + 1,
+      Link: prFormulaLink(excelRow),
+      Comentário: r.comment,
+      Campaigns: prFormulaCampaigns(excelRow),
+      source: r.source,
+      commentFrom: r.commentFrom
+    };
+  });
+}
+
+function prToTsv(built, withHeader) {
+  const lines = [];
+  if (withHeader) lines.push(PR_OUT_COLUMNS.join('\t'));
+  built.forEach(r => {
+    lines.push(PR_OUT_COLUMNS.map(c => String(r[c] ?? '').replace(/\t/g, ' ').replace(/\r?\n/g, ' ')).join('\t'));
+  });
+  return lines.join('\r\n');
+}
+
+function prSelOptions(headers, selected, scores) {
+  return headers.map((h, i) => {
+    const n = scores && scores[i] ? ` (${scores[i]} ticket${scores[i] > 1 ? 's' : ''})` : '';
+    return `<option value="${i}" ${i === selected ? 'selected' : ''}>${i + 1}. ${escapeHtml(h || '(vazio)')}${n}</option>`;
+  }).join('');
+}
+
+function prRenderCountry() {
+  document.getElementById('prTabs').innerHTML = PR_COUNTRIES.map(c => `
+    <button type="button" class="country-tab ${c.code === prState.country ? 'active' : ''}" data-pr-country="${c.code}">
+      <span class="country-tab-code">${c.code}</span>
+      <span class="country-tab-name">${escapeHtml(c.name)}</span>
+      <span class="country-tab-status">Sub: ${c.sub}</span>
+    </button>`).join('');
+}
+
+function prRefresh() {
+  prRenderCountry();
+  const c = prCountry();
+  const current = prParseCurrent(document.getElementById('prCurrentText').value);
+  const neu = prParseNew(document.getElementById('prNewText').value);
+
+  if (neu.ok) {
+    if (!prState.pickedTicket || prState.ticketCol < 0 || prState.ticketCol >= neu.width) {
+      prState.ticketCol = neu.ticketCol;
+    }
+    if (!prState.pickedComment && neu.commentCol >= 0) prState.commentCol = neu.commentCol;
+    if (prState.commentCol >= neu.width) prState.commentCol = -1;
+  }
+
+  const colBox = document.getElementById('prNewCols');
+  if (!neu.ok) {
+    colBox.innerHTML = neu.error ? `<div class="muted">${escapeHtml(neu.error)}</div>` : '';
+  } else {
+    colBox.innerHTML = `
+      <div class="d-flex flex-wrap gap-3 align-items-end">
+        <div>
+          <label class="form-label mb-1" for="prTicketCol">Coluna do ticket (final do link Jira)</label>
+          <select id="prTicketCol" class="form-select form-select-sm" style="min-width: 260px">
+            ${prSelOptions(neu.headers, prState.ticketCol, neu.scores)}
+          </select>
+        </div>
+        <div class="form-check mt-4">
+          <input class="form-check-input" type="checkbox" id="prNoComment" ${prState.noComment ? 'checked' : ''}>
+          <label class="form-check-label" for="prNoComment">Não tem comentário</label>
+        </div>
+        <div id="prCommentWrap" style="${prState.noComment ? 'display:none' : ''}">
+          <label class="form-label mb-1" for="prCommentCol">Coluna de comentário</label>
+          <select id="prCommentCol" class="form-select form-select-sm" style="min-width: 260px">
+            <option value="-1" ${prState.commentCol < 0 ? 'selected' : ''}>— escolher —</option>
+            ${prSelOptions(neu.headers, prState.commentCol)}
+          </select>
+        </div>
+      </div>
+      <div class="muted small mt-2">Sub desta montagem: <strong>${escapeHtml(c.sub)}</strong> (${escapeHtml(c.name)}). Ticket = texto depois da última / do link (ex.: LC-53129).</div>`;
+    document.getElementById('prTicketCol').addEventListener('change', e => {
+      prState.ticketCol = Number(e.target.value);
+      prState.pickedTicket = true;
+      prRefresh();
+    });
+    document.getElementById('prNoComment').addEventListener('change', e => {
+      prState.noComment = e.target.checked;
+      prRefresh();
+    });
+    const cc = document.getElementById('prCommentCol');
+    if (cc) cc.addEventListener('change', e => {
+      prState.commentCol = Number(e.target.value);
+      prState.pickedComment = true;
+      prRefresh();
+    });
+  }
+
+  const out = document.getElementById('prResult');
+  const hasCurrent = !!(document.getElementById('prCurrentText').value || '').trim();
+  const hasNew = !!(document.getElementById('prNewText').value || '').trim();
+  if (!hasCurrent && !hasNew) {
+    out.innerHTML = '<div class="result-banner result-wait"><i class="bi bi-hourglass-split"></i><div><div class="result-title">AGUARDANDO</div><div class="result-sub">Cole a tabela atual e a tabela nova do país.</div></div></div>';
+    document.getElementById('prCopyText').value = '';
+    return;
+  }
+  if (hasCurrent && !current.ok) {
+    out.innerHTML = `<div class="result-banner result-fail"><i class="bi bi-x-circle-fill"></i><div><div class="result-title">FALHA NA TABELA ATUAL</div><div class="result-sub">${escapeHtml(current.error)}</div></div></div>`;
+    document.getElementById('prCopyText').value = '';
+    return;
+  }
+  if (hasNew && !neu.ok) {
+    out.innerHTML = `<div class="result-banner result-fail"><i class="bi bi-x-circle-fill"></i><div><div class="result-title">FALHA NA TABELA NOVA</div><div class="result-sub">${escapeHtml(neu.error)}</div></div></div>`;
+    document.getElementById('prCopyText').value = '';
+    return;
+  }
+  if (!hasNew) {
+    out.innerHTML = `<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>Tabela atual</strong><span>${current.rows.length} ticket(s) lido(s). Cole a tabela nova para montar.</span></div></div>`;
+    document.getElementById('prCopyText').value = '';
+    return;
+  }
+  if (prState.ticketCol < 0) {
+    out.innerHTML = '<div class="result-banner result-fail"><i class="bi bi-x-circle-fill"></i><div><div class="result-title">SEM TICKET</div><div class="result-sub">Não achei coluna com ticket (LC-123). Escolha a coluna do link/ticket.</div></div></div>';
+    document.getElementById('prCopyText').value = '';
+    return;
+  }
+  if (!prState.noComment && prState.commentCol < 0 && prState.pickedComment === false) {
+    // ainda pode montar sem comentário da nova: herda da atual
+  }
+
+  const extracted = prNewTickets(neu, prState.ticketCol, prState.noComment ? -1 : prState.commentCol, prState.noComment);
+  const merged = prMerge(current.ok ? current.rows : [], extracted.rows, c.sub);
+  const built = prBuildSheet(merged.rows, prState.startRow);
+  const tsv = prToTsv(built, false);
+  document.getElementById('prCopyText').value = tsv;
+
+  const st = merged.stats;
+  const shown = built.slice(0, PR_TABLE_ROWS);
+  out.innerHTML = `
+    <div class="result-banner result-ok">
+      <i class="bi bi-check-circle-fill"></i>
+      <div>
+        <div class="result-title">PLANILHA MONTADA</div>
+        <div class="result-sub">${built.length} linha(s) · Priority 1…${built.length} · fórmulas a partir da linha ${prState.startRow}. Copie e cole no SharePoint/Excel.</div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat stat-ok"><span>Só na nova</span><strong>${st.fromNew}</strong></div>
+      <div class="stat"><span>Já existiam (ordem da nova)</span><strong>${st.overlap}</strong></div>
+      <div class="stat"><span>Só na atual (vão abaixo)</span><strong>${st.fromOld}</strong></div>
+      <div class="stat"><span>Comentário da nova</span><strong>${st.commentNew}</strong></div>
+      <div class="stat"><span>Comentário herdado</span><strong>${st.commentOld}</strong></div>
+    </div>
+    ${extracted.dups.length ? `<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>Duplicados na nova</strong><span>mantive a primeira ocorrência: ${escapeHtml([...new Set(extracted.dups)].join(', '))}</span></div></div>` : ''}
+    <div class="table-wrap"><table class="table table-sm table-dark mb-0">
+      <thead><tr>${PR_OUT_COLUMNS.map(h => `<th>${escapeHtml(h)}</th>`).join('')}<th>Origem</th></tr></thead>
+      <tbody>${shown.map(r => `<tr>
+        <td>${escapeHtml(r.Sub)}</td>
+        <td><strong>${escapeHtml(r.Ticket)}</strong></td>
+        <td class="pr-formula" title="${escapeHtml(r.Status)}">=VLOOKUP(B${r.excelRow}…,3,0)</td>
+        <td class="pr-formula" title="${escapeHtml(r.Assignee)}">=VLOOKUP(B${r.excelRow}…,2,0)</td>
+        <td>${r.Priority}</td>
+        <td class="pr-formula" title="${escapeHtml(r.Link)}">=HYPERLINK(…B${r.excelRow})</td>
+        <td>${escapeHtml(r.Comentário)}</td>
+        <td class="pr-formula" title="${escapeHtml(r.Campaigns)}">=VLOOKUP(B${r.excelRow}…,5,0)</td>
+        <td class="muted">${escapeHtml(r.source)}${r.commentFrom ? ' · com. ' + r.commentFrom : ''}</td>
+      </tr>`).join('')}</tbody></table></div>
+      ${built.length > PR_TABLE_ROWS ? `<div class="muted small mt-2">Prévia: ${PR_TABLE_ROWS} de ${built.length} linhas. O copiar leva todas.</div>` : ''}
+      <div class="muted small mt-2">Status, Assignee, Link e Campaigns vão como fórmula. Ticket e Comentário vão como texto.</div>`;
+}
+
+function prCopy() {
+  const tsv = document.getElementById('prCopyText').value;
+  if (!tsv.trim()) { alert('Nada para copiar. Cole as tabelas primeiro.'); return; }
+  const done = () => {
+    const b = document.getElementById('prCopy');
+    b.textContent = 'Copiado';
+    setTimeout(() => { b.innerHTML = '<i class="bi bi-clipboard"></i> Copiar linhas'; }, 1500);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(tsv).then(done).catch(() => {
+      document.getElementById('prCopyText').select();
+      document.execCommand('copy');
+      done();
+    });
+  } else {
+    document.getElementById('prCopyText').select();
+    document.execCommand('copy');
+    done();
+  }
+}
+
+function prClear() {
+  document.getElementById('prCurrentText').value = '';
+  document.getElementById('prNewText').value = '';
+  prState.ticketCol = -1;
+  prState.commentCol = -1;
+  prState.noComment = false;
+  prState.pickedTicket = false;
+  prState.pickedComment = false;
+  prRefresh();
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', () => {
+    prRenderCountry();
+    document.getElementById('prTabs').addEventListener('click', e => {
+      const b = e.target.closest('[data-pr-country]');
+      if (!b) return;
+      prState.country = b.dataset.prCountry;
+      prRefresh();
+    });
+    let t1, t2;
+    document.getElementById('prCurrentText').addEventListener('input', () => {
+      clearTimeout(t1); t1 = setTimeout(prRefresh, 250);
+    });
+    document.getElementById('prNewText').addEventListener('input', () => {
+      prState.pickedTicket = false;
+      prState.pickedComment = false;
+      clearTimeout(t2); t2 = setTimeout(prRefresh, 250);
+    });
+    document.getElementById('prStartRow').addEventListener('change', e => {
+      prState.startRow = Math.max(1, parseInt(e.target.value, 10) || 2);
+      prRefresh();
+    });
+    document.getElementById('prCopy').addEventListener('click', prCopy);
+    document.getElementById('prClear').addEventListener('click', prClear);
+    prRefresh();
+  });
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = {
+    prExtractTicket, prParseCurrent, prParseNew, prNewTickets, prMerge, prBuildSheet, prToTsv, prFormulaStatus, prFormulaLink
+  };
+}
