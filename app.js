@@ -12,7 +12,7 @@ function showScreen(name, menuItem) {
 
 /* ===== Estado ===== */
 const state = {
-  pumi: null,      // { file, headers, body }
+  pumi: null,      // { text, result }
   template: null   // { file, workbook }
 };
 
@@ -116,74 +116,21 @@ function renderPumiResult(result) {
 }
 
 function renderPumi() {
-  const info = document.getElementById('pumiInfo');
   const resultBox = document.getElementById('pumiResult');
-  const zone = document.getElementById('pumiDrop');
-  if (!state.pumi) {
-    info.classList.add('d-none');
-    info.innerHTML = '';
+  if (!state.pumi || !state.pumi.result) {
     resultBox.classList.add('d-none');
     resultBox.innerHTML = '';
-    zone.classList.remove('has-file');
     return;
   }
-  const { file, meta, text, note, result, partsInfo } = state.pumi;
-  zone.classList.add('has-file');
-  info.classList.remove('d-none');
-  info.innerHTML = `
-    <dl>
-      <dt>Arquivo</dt><dd>${escapeHtml(file.name)} (${formatSize(file.size)})</dd>
-      ${meta.from ? `<dt>De</dt><dd>${escapeHtml(meta.from)}</dd>` : ''}
-      ${meta.to ? `<dt>Para</dt><dd>${escapeHtml(meta.to)}</dd>` : ''}
-      ${meta.subject ? `<dt>Assunto</dt><dd>${escapeHtml(meta.subject)}</dd>` : ''}
-      ${meta.date ? `<dt>Data</dt><dd>${escapeHtml(String(meta.date))}</dd>` : ''}
-      ${note ? `<dt>Obs.</dt><dd class="text-warning">${escapeHtml(note)}</dd>` : ''}
-    </dl>`;
-
   resultBox.classList.remove('d-none');
-  if (!result) {
-    resultBox.innerHTML = `
-      <div class="result-banner result-fail">
-        <i class="bi bi-exclamation-triangle-fill"></i>
-        <div>
-          <div class="result-title">NÃO FOI POSSÍVEL LER O ARQUIVO</div>
-          <div class="result-sub">${escapeHtml(state.pumi.unreadable)}</div>
-        </div>
-      </div>`;
-    return;
-  }
-  resultBox.innerHTML = renderPumiResult(result) + `
-    <details class="mt-3">
-      <summary class="muted">Ver texto lido do arquivo</summary>
-      <div class="email-body">${escapeHtml(flattenSpaces(text).slice(0, 20000))}</div>
-    </details>
-    ${partsInfo.length ? `
-    <details class="mt-2">
-      <summary class="muted">Ver estrutura do e-mail (partes lidas)</summary>
-      <div class="email-body">${partsInfo.map(p => escapeHtml(
-        [p.type || '(sem tipo)', p.encoding, p.charset && 'charset ' + p.charset,
-         p.size != null && formatSize(p.size), p.chars != null && p.chars + ' caracteres', p.status]
-          .filter(Boolean).join(' · ') + (p.preview ? '\n   início: ' + p.preview : '')
-      )).join('\n\n')}</div>
-    </details>` : ''}`;
+  resultBox.innerHTML = renderPumiResult(state.pumi.result);
 }
 
-async function handlePumi(file) {
-  if (!hasExt(file, ['.eml', '.msg'])) {
-    alert('Formato inválido. Use .eml ou .msg.');
-    return;
-  }
-  try {
-    const { meta, text, searchText, note, partsInfo, unreadable } = await readPumiFile(file);
-    state.pumi = {
-      file, meta, text, note, unreadable, partsInfo: partsInfo || [],
-      result: unreadable ? null : checkPumi(searchText || text)
-    };
-    renderPumi();
-    updateStartButton();
-  } catch (err) {
-    alert('Não foi possível ler o e-mail: ' + err.message);
-  }
+function handlePumiText() {
+  const text = cleanInvisible(document.getElementById('pumiText').value);
+  state.pumi = text.trim() ? { text, result: checkPumi(text) } : null;
+  renderPumi();
+  updateStartButton();
 }
 
 /* ===== Template (Excel) ===== */
@@ -264,7 +211,7 @@ async function handleTemplate(file) {
 function clearAll() {
   state.pumi = null;
   state.template = null;
-  document.getElementById('pumiInput').value = '';
+  document.getElementById('pumiText').value = '';
   document.getElementById('templateInput').value = '';
   renderPumi();
   renderTemplate();
@@ -272,7 +219,11 @@ function clearAll() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  setupDropzone('pumiDrop', 'pumiInput', handlePumi);
+  let pumiTimer;
+  document.getElementById('pumiText').addEventListener('input', () => {
+    clearTimeout(pumiTimer);
+    pumiTimer = setTimeout(handlePumiText, 250);
+  });
   setupDropzone('templateDrop', 'templateInput', handleTemplate);
 
   document.getElementById('sheetSelect').addEventListener('change', e => renderSheet(e.target.value));

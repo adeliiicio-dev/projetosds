@@ -60,16 +60,11 @@
             <i class="bi bi-envelope-paper text-accent fs-4"></i>
             <h4 class="m-0">PUMI</h4>
           </div>
-          <p class="muted mb-3">Anexe o arquivo do e-mail (.eml ou .msg). O sistema confere os aprovadores e se não há "pending".</p>
+          <p class="muted mb-3">Abra o e-mail, selecione tudo (Ctrl+A), copie (Ctrl+C) e cole abaixo (Ctrl+V). O sistema confere os aprovadores e se não há "pending".</p>
 
-          <div class="dropzone" id="pumiDrop" tabindex="0">
-            <i class="bi bi-cloud-arrow-up"></i>
-            <div><strong>Arraste o e-mail aqui</strong> ou clique para selecionar</div>
-            <small class="muted">.eml, .msg</small>
-            <input type="file" id="pumiInput" accept=".eml,.msg" hidden />
-          </div>
+          <textarea id="pumiText" class="form-control pumi-textarea" rows="8"
+            placeholder="Cole aqui o conteúdo do e-mail (PUMI)..." spellcheck="false"></textarea>
 
-          <div id="pumiInfo" class="file-info d-none"></div>
           <div id="pumiResult" class="mt-3 d-none"></div>
         </div>
 

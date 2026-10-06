@@ -306,3 +306,10 @@ h1 {
 .approver { font-size: .9rem; margin-top: 4px; }
 .approver.found { color: #6ee7b7; font-weight: 600; }
 .approver.missing { color: var(--text-muted); }
+
+.pumi-textarea {
+  font-size: .85rem;
+  font-family: Consolas, 'Courier New', monospace;
+  resize: vertical;
+  min-height: 160px;
+}
