@@ -1,0 +1,14 @@
+---
+alwaysApply: true
+---
+---
+markdown
+---
+description: Use Caveman mode to reduce token costs
+globs: *
+alwaysApply: true
+---
+- Answer first. [thing] [action] [reason]. [next step]. No greetings, no "let me", no recap.
+- One idea per sentence. Max 20 words. Active voice.
+- Meaning never dropped. Articles can go, but never remove 'not', 'never', 'no', 'only'.
+- Code blocks, commands, paths, and error messages must stay verbatim.

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SDS - Conferência de Planilhas</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="wrapper">
+
+    <!-- Menu lateral -->
+    <aside class="sidebar">
+      <div class="sidebar-brand"><i class="bi bi-file-earmark-spreadsheet"></i> SDS</div>
+
+      <div class="menu-title">Navegação</div>
+      <button class="side-button active" data-screen="triagem" onclick="showScreen('triagem')">
+        <i class="bi bi-funnel"></i> Triagem
+      </button>
+      <button class="side-button" data-screen="prioridades" onclick="showScreen('prioridades')">
+        <i class="bi bi-list-ol"></i> Lista de prioridades
+      </button>
+    </aside>
+
+    <!-- Conteúdo -->
+    <main class="content-area">
+
+      <!-- Triagem: escolha do tipo -->
+      <section id="screen-triagem" class="screen active">
+        <h1>Triagem</h1>
+        <p class="subtitle">Escolha o tipo de triagem que deseja iniciar.</p>
+
+        <div class="row g-3">
+          <div class="col-12 col-md-6 col-xl-4">
+            <button class="tipo-card" onclick="showScreen('special-price', 'triagem')">
+              <span class="tipo-card-icon"><i class="bi bi-tag"></i></span>
+              <span class="tipo-card-body">
+                <strong>Special price</strong>
+                <small>Conferência de special price a partir do e-mail PUMI e do template Excel.</small>
+              </span>
+              <i class="bi bi-chevron-right tipo-card-arrow"></i>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Triagem: Special price -->
+      <section id="screen-special-price" class="screen">
+        <button class="btn btn-sm btn-outline-secondary mb-3" onclick="showScreen('triagem')">
+          <i class="bi bi-arrow-left"></i> Voltar
+        </button>
+        <h1>Triagem - Special price</h1>
+        <p class="subtitle">Anexe o e-mail PUMI e o template Excel para iniciar a triagem.</p>
+
+        <!-- PUMI -->
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-envelope-paper text-accent fs-4"></i>
+            <h4 class="m-0">PUMI</h4>
+          </div>
+          <p class="muted mb-3">Anexe o arquivo do e-mail (.eml ou .msg). O sistema confere os aprovadores e se não há "pending".</p>
+
+          <div class="dropzone" id="pumiDrop" tabindex="0">
+            <i class="bi bi-cloud-arrow-up"></i>
+            <div><strong>Arraste o e-mail aqui</strong> ou clique para selecionar</div>
+            <small class="muted">.eml, .msg</small>
+            <input type="file" id="pumiInput" accept=".eml,.msg" hidden />
+          </div>
+
+          <div id="pumiInfo" class="file-info d-none"></div>
+          <div id="pumiResult" class="mt-3 d-none"></div>
+        </div>
+
+        <!-- Template -->
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-file-earmark-excel text-accent fs-4"></i>
+            <h4 class="m-0">Template</h4>
+          </div>
+          <p class="muted mb-3">Anexe o arquivo Excel (.xlsx, .xls) que será lido.</p>
+
+          <div class="dropzone" id="templateDrop" tabindex="0">
+            <i class="bi bi-cloud-arrow-up"></i>
+            <div><strong>Arraste o Excel aqui</strong> ou clique para selecionar</div>
+            <small class="muted">.xlsx, .xls, .xlsm</small>
+            <input type="file" id="templateInput" accept=".xlsx,.xls,.xlsm" hidden />
+          </div>
+
+          <div id="templateInfo" class="file-info d-none"></div>
+
+          <div id="templatePreview" class="d-none mt-3">
+            <div class="d-flex flex-wrap align-items-end gap-3 mb-2">
+              <div>
+                <label class="form-label mb-1" for="sheetSelect">Aba</label>
+                <select id="sheetSelect" class="form-select form-select-sm"></select>
+              </div>
+              <div id="sheetStats" class="muted small"></div>
+            </div>
+            <div class="table-wrap">
+              <table class="table table-sm table-dark table-bordered mb-0" id="previewTable"></table>
+            </div>
+            <div class="muted small mt-2" id="previewNote"></div>
+          </div>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-samsung" id="btnIniciar" disabled>
+            <i class="bi bi-play-circle"></i> Iniciar triagem
+          </button>
+          <button class="btn btn-outline-secondary" id="btnLimpar">
+            <i class="bi bi-x-circle"></i> Limpar
+          </button>
+        </div>
+      </section>
+
+      <!-- Lista de prioridades -->
+      <section id="screen-prioridades" class="screen">
+        <h1>Lista de prioridades</h1>
+        <p class="subtitle">Em construção.</p>
+        <div class="section-card muted">Os detalhes desta tela serão definidos depois.</div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="pumi.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
