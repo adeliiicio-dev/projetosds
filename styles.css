@@ -364,3 +364,16 @@ h1 {
 .col-chip em { display: block; font-style: normal; font-size: .72rem; font-weight: 700; margin-top: 2px; color: #6ee7b7; }
 .col-chip em.off { color: var(--text-muted); font-weight: 500; }
 .chip-off { opacity: .55; }
+
+.catalog-box { border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 14px; background: var(--card-soft); margin-bottom: 8px; }
+.catalog-box-title { font-weight: 700; margin-bottom: 8px; }
+.catalog-box-title i { color: var(--accent-primary); margin-right: 6px; }
+.catalog-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.catalog-pill { background: #0b1233; border: 1px solid var(--border-color); color: var(--text-main); border-radius: 999px; padding: 4px 12px; font-size: .85rem; cursor: pointer; transition: all .2s ease; }
+.catalog-pill small { color: var(--text-muted); margin-left: 4px; }
+.catalog-pill:hover { border-color: var(--accent-primary); }
+.catalog-pill.active { background: var(--samsung-blue); border-color: var(--accent-primary); }
+.catalog-pill.active small { color: #fff; opacity: .85; }
+.saved-card-cats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.catalog-tag { background: #0b1233; border: 1px solid var(--border-color); border-radius: 6px; padding: 1px 8px; font-size: .78rem; }
+.catalog-tag small { color: var(--text-muted); }

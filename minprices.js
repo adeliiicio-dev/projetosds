@@ -8,6 +8,7 @@ const MP_COUNTRIES = [
 ];
 
 const MP_KEY_COLUMN = 'Variant_Product';
+const MP_CATALOG_COLUMN = 'Catalog_version';
 
 const MP_COLUMNS = [
   'Variant_Product', 'Minimum_Product_Price', 'Catalog_version', 'Catalog_status',
@@ -15,15 +16,17 @@ const MP_COLUMNS = [
   'allow Sync MSP Price', 'enable MSP Special Price Validation', 'BaseProduct', 'RRP'
 ];
 
-const MP_STORAGE_KEY = 'sds.minPrices.v2';
+const MP_STORAGE_KEY = 'sds.minPrices.v3';
 const MP_PREVIEW_ROWS = 50;
 const MP_SAVED_ROWS = 100;
+const MP_NO_CATALOG = '(sem catálogo)';
 
 const mpState = {
   country: 'CL',
-  drafts: {},    // texto colado por país (só em memória)
+  drafts: {},          // texto colado por país (só em memória)
   parsed: null,
-  lastSave: null // { code, savedAt, expected, matched }
+  previewCatalog: '',  // filtro de catálogo na prévia ('' = todos)
+  lastSave: null       // { code, savedAt, priceColumn, expected, matched }
 };
 
 function mpCountry(code) {
@@ -67,6 +70,14 @@ function mpDetectDelimiter(line) {
   return counts[0].n > 0 ? counts[0].d : '\t';
 }
 
+// Lista os catálogos com a quantidade de modelos em cada um.
+function mpCatalogsOf(rows) {
+  const map = new Map();
+  rows.forEach(r => map.set(r.catalog, (map.get(r.catalog) || 0) + 1));
+  return Array.from(map, ([name, count]) => ({ name, count }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+
 // priceColumn: coluna de onde sai o preço salvo (depende do país).
 function mpParse(text, priceColumn) {
   const lines = text.replace(/\r/g, '').split('\n')
@@ -96,13 +107,13 @@ function mpParse(text, priceColumn) {
     MP_COLUMNS.forEach((col, i) => { columns[col] = i; });
   }
 
-  const required = [MP_KEY_COLUMN, priceColumn];
+  const required = [MP_KEY_COLUMN, MP_CATALOG_COLUMN, priceColumn];
   const missingRequired = required.filter(c => columns[c] < 0);
 
   const dataLines = lines.slice(headerFound ? headerIdx + 1 : 0);
-  const byKey = new Map();
-  const ignored = [];
-  const duplicates = new Map();
+  const byKey = new Map();   // Variant_Product + Catalog_version
+  let ignoredCount = 0;
+  const conflicts = new Map();
 
   if (!missingRequired.length) {
     dataLines.forEach(({ content, lineNo }) => {
@@ -110,32 +121,27 @@ function mpParse(text, priceColumn) {
       const get = col => (cells[columns[col]] ?? '').trim();
       const variant = get(MP_KEY_COLUMN);
       if (mpNormKey(variant) === keyNorm) return; // cabeçalho repetido
-      if (!variant) { ignored.push({ lineNo, reason: `${MP_KEY_COLUMN} vazio`, content }); return; }
-      const rawPrice = get(priceColumn);
-      const price = mpParsePrice(rawPrice);
-      if (price === null) {
-        ignored.push({ lineNo, reason: `${priceColumn} inválido: "${rawPrice}"`, content });
-        return;
+      const price = mpParsePrice(get(priceColumn));
+      if (!variant || price === null) { ignoredCount++; return; }
+      const catalog = get(MP_CATALOG_COLUMN) || MP_NO_CATALOG;
+      const key = variant.toUpperCase() + '||' + catalog.toUpperCase();
+      const prev = byKey.get(key);
+      if (prev && prev.price !== price) {
+        const c = conflicts.get(key) || { variant, catalog, lines: [prev.lineNo], prices: [prev.price] };
+        c.lines.push(lineNo);
+        c.prices.push(price);
+        conflicts.set(key, c);
       }
-      const key = variant.toUpperCase();
-      if (byKey.has(key)) {
-        const d = duplicates.get(key) || { code: variant, lines: [byKey.get(key).lineNo], prices: [byKey.get(key).price] };
-        d.lines.push(lineNo);
-        d.prices.push(price);
-        duplicates.set(key, d);
-      }
-      byKey.set(key, { lineNo, variant, rawPrice, price });
+      byKey.set(key, { lineNo, variant, catalog, rawPrice: get(priceColumn), price });
     });
   }
 
   const rows = Array.from(byKey.values());
-  const prices = rows.map(r => r.price);
   return {
     priceColumn, delim, headerFound, headerCells, columns, missingRequired,
-    totalLines: dataLines.length,
-    rows, ignored, duplicates: Array.from(duplicates.values()),
-    minPrice: prices.length ? Math.min(...prices) : null,
-    maxPrice: prices.length ? Math.max(...prices) : null
+    rows, ignoredCount,
+    catalogs: mpCatalogsOf(rows),
+    conflicts: Array.from(conflicts.values())
   };
 }
 
@@ -146,14 +152,14 @@ function mpLoadAll() {
   catch { return {}; }
 }
 
-// Salva por país: Variant_Product -> preço (da coluna indicada em priceColumn).
+// Salva por país: [Variant_Product, Catalog_version, preço] (preço da coluna priceColumn).
 function mpSaveCountry(code, parsed) {
   const all = mpLoadAll();
   all[code] = {
     country: code,
     savedAt: new Date().toISOString(),
     priceColumn: parsed.priceColumn,
-    rows: parsed.rows.map(r => [r.variant, r.price])
+    rows: parsed.rows.map(r => [r.variant, r.catalog, r.price])
   };
   localStorage.setItem(MP_STORAGE_KEY, JSON.stringify(all)); // pode lançar erro de cota
   return all[code];
@@ -165,16 +171,20 @@ function mpDeleteCountry(code) {
   localStorage.setItem(MP_STORAGE_KEY, JSON.stringify(all));
 }
 
-// Lê de volta do armazenamento e compara cada Variant_Product -> preço com o que foi colado.
+// Lê de volta do armazenamento e compara cada Variant_Product + catálogo -> preço com o que foi colado.
 function mpVerifySaved(code, parsed) {
   const saved = mpLoadAll()[code];
   const map = new Map();
-  if (saved) saved.rows.forEach(r => map.set(String(r[0]).toUpperCase(), r[1]));
+  if (saved) saved.rows.forEach(r => map.set(String(r[0]).toUpperCase() + '||' + String(r[1]).toUpperCase(), r[2]));
   let matched = 0;
   parsed.rows.forEach(r => {
-    if (map.get(r.variant.toUpperCase()) === r.price) matched++;
+    if (map.get(r.variant.toUpperCase() + '||' + r.catalog.toUpperCase()) === r.price) matched++;
   });
-  return { expected: parsed.rows.length, matched, stored: map.size };
+  return { expected: parsed.rows.length, matched };
+}
+
+function mpSavedCatalogs(saved) {
+  return mpCatalogsOf(saved.rows.map(r => ({ catalog: r[1] })));
 }
 
 /* ---------- Formatação ---------- */
@@ -197,7 +207,7 @@ function mpRenderTabs() {
       <button type="button" class="country-tab ${c.code === mpState.country ? 'active' : ''}" data-country="${c.code}">
         <span class="country-tab-code">${c.code}</span>
         <span class="country-tab-name">${escapeHtml(c.name)}</span>
-        <span class="country-tab-status ${saved ? 'saved' : ''}">${saved ? saved.rows.length + ' modelos' : 'sem dados'}</span>
+        <span class="country-tab-status ${saved ? 'saved' : ''}">${saved ? saved.rows.length + ' registros' : 'sem dados'}</span>
       </button>`;
   }).join('');
 }
@@ -214,7 +224,7 @@ function mpRenderNotice() {
     : `<div class="check-item check-info">
          <div class="check-head"><i class="bi bi-info-circle-fill"></i>
            <strong>${escapeHtml(c.name)}:</strong>
-           <span>salva ${MP_KEY_COLUMN} + <mark>${c.priceColumn}</mark>.</span></div>
+           <span>salva ${MP_KEY_COLUMN} + ${MP_CATALOG_COLUMN} + <mark>${c.priceColumn}</mark>.</span></div>
        </div>`;
 }
 
@@ -240,73 +250,77 @@ function mpRenderRecognition() {
            <div class="result-title">PLANILHA NÃO RECONHECIDA</div>
            <div class="result-sub">${p.missingRequired.length
              ? `Coluna obrigatória não encontrada: ${p.missingRequired.join(', ')}.`
-             : `Nenhuma linha válida (${MP_KEY_COLUMN} e ${p.priceColumn} preenchidos).`}</div>
+             : `Nenhuma linha com ${MP_KEY_COLUMN} e ${p.priceColumn} preenchidos.`}</div>
          </div>
        </div>`
     : `<div class="result-banner result-ok">
          <i class="bi bi-check-circle-fill"></i>
          <div>
            <div class="result-title">PLANILHA RECONHECIDA</div>
-           <div class="result-sub">${p.rows.length} modelos válidos para ${escapeHtml(c.name)} (${MP_KEY_COLUMN} + ${p.priceColumn}). Confira abaixo e clique em salvar.</div>
+           <div class="result-sub">${escapeHtml(c.name)}: ${p.rows.length} registros em ${p.catalogs.length} catálogo(s). Confira abaixo e clique em salvar.</div>
          </div>
        </div>`;
 
   const chips = MP_COLUMNS.map(col => {
     const idx = p.columns[col];
     const found = idx >= 0;
-    const used = col === MP_KEY_COLUMN || col === p.priceColumn;
-    const cls = used ? (found ? 'chip-ok' : 'chip-fail') : (found ? '' : 'chip-off');
+    const role = col === MP_KEY_COLUMN ? 'CHAVE' : col === MP_CATALOG_COLUMN ? 'CATÁLOGO' : col === p.priceColumn ? 'PREÇO' : '';
+    const cls = role ? (found ? 'chip-ok' : 'chip-fail') : (found ? '' : 'chip-off');
     const where = found
       ? (p.headerFound ? `coluna ${idx + 1}` : `coluna ${idx + 1} (por posição)`)
-      : (used ? 'NÃO ENCONTRADA' : 'não encontrada');
-    const tag = used ? `<em>${col === MP_KEY_COLUMN ? 'CHAVE' : 'PREÇO'} · salva</em>` : '<em class="off">não salva</em>';
+      : (role ? 'NÃO ENCONTRADA' : 'não encontrada');
+    const tag = role ? `<em>${role} · salva</em>` : '<em class="off">não salva</em>';
     return `<div class="col-chip ${cls}"><strong>${col}</strong><span>${where}</span>${tag}</div>`;
   }).join('');
 
-  const dupWarn = p.duplicates.length
-    ? `<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>${p.duplicates.length} ${MP_KEY_COLUMN} repetido(s)</strong><span>vale a última linha</span></div>
-         <div class="check-evidence">${p.duplicates.slice(0, 10).map(d =>
-           `<span class="ev-snippet"><mark>${escapeHtml(d.code)}</mark> linhas ${d.lines.join(', ')} · preços ${d.prices.map(mpFmtNumber).join(' / ')}</span>`).join('')}</div></div>`
+  let catalogBlock = '', table = '';
+  if (!invalid) {
+    const sel = mpState.previewCatalog;
+    catalogBlock = `
+      <div class="catalog-box">
+        <div class="catalog-box-title"><i class="bi bi-collection"></i> Catalog_version encontrados em ${escapeHtml(c.name)}</div>
+        <div class="catalog-list">
+          <button type="button" class="catalog-pill ${sel === '' ? 'active' : ''}" data-catalog="">Todos <small>${p.rows.length}</small></button>
+          ${p.catalogs.map(k => `<button type="button" class="catalog-pill ${sel === k.name ? 'active' : ''}" data-catalog="${escapeHtml(k.name)}">${escapeHtml(k.name)} <small>${k.count}</small></button>`).join('')}
+        </div>
+      </div>`;
+
+    const filtered = sel ? p.rows.filter(r => r.catalog === sel) : p.rows;
+    const preview = filtered.slice(0, MP_PREVIEW_ROWS);
+    table = `
+      <div class="table-wrap mt-3">
+        <table class="table table-sm table-dark table-bordered mb-0">
+          <thead><tr><th>#</th><th>${MP_KEY_COLUMN}</th><th>${MP_CATALOG_COLUMN}</th><th>${p.priceColumn} (como veio)</th><th>Preço lido (será salvo)</th></tr></thead>
+          <tbody>${preview.map((r, i) => `
+            <tr>
+              <td class="muted">${i + 1}</td>
+              <td><strong>${escapeHtml(r.variant)}</strong></td>
+              <td>${escapeHtml(r.catalog)}</td>
+              <td>${escapeHtml(r.rawPrice)}</td>
+              <td class="price-read">${mpFmtNumber(r.price)}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+      <div class="muted small mt-2">${filtered.length > MP_PREVIEW_ROWS ? `Mostrando as primeiras ${MP_PREVIEW_ROWS} de ${filtered.length} registros.` : `${filtered.length} registros.`}</div>`;
+  }
+
+  const conflictWarn = p.conflicts.length
+    ? `<div class="check-item check-warn mt-3"><div class="check-head"><i class="bi bi-exclamation-triangle-fill"></i><strong>${p.conflicts.length} ${MP_KEY_COLUMN} repetido(s) no mesmo catálogo com preços diferentes</strong><span>vale a última linha</span></div>
+         <div class="check-evidence">${p.conflicts.slice(0, 10).map(d =>
+           `<span class="ev-snippet"><mark>${escapeHtml(d.variant)}</mark> · ${escapeHtml(d.catalog)} · linhas ${d.lines.join(', ')} · preços ${d.prices.map(mpFmtNumber).join(' / ')}</span>`).join('')}</div></div>`
     : '';
 
-  const ignoredWarn = p.ignored.length
-    ? `<div class="check-item check-fail"><div class="check-head"><i class="bi bi-x-circle-fill"></i><strong>${p.ignored.length} linha(s) ignorada(s)</strong><span>não serão salvas</span></div>
-         <div class="check-evidence">${p.ignored.slice(0, 20).map(i =>
-           `<span class="ev-snippet">linha ${i.lineNo}: <mark>${escapeHtml(i.reason)}</mark> · ${escapeHtml(i.content.slice(0, 120))}</span>`).join('')}
-         ${p.ignored.length > 20 ? `<div class="muted small">... e mais ${p.ignored.length - 20}</div>` : ''}</div></div>`
+  const ignoredNote = p.ignoredCount
+    ? `<div class="muted small mt-2">${p.ignoredCount} linha(s) sem ${MP_KEY_COLUMN} ou sem preço válido não serão salvas.</div>`
     : '';
-
-  const preview = p.rows.slice(0, MP_PREVIEW_ROWS);
-  const table = `
-    <div class="table-wrap mt-3">
-      <table class="table table-sm table-dark table-bordered mb-0">
-        <thead><tr><th>#</th><th>${MP_KEY_COLUMN}</th><th>${p.priceColumn} (como veio)</th><th>Preço lido (será salvo)</th></tr></thead>
-        <tbody>${preview.map((r, i) => `
-          <tr>
-            <td class="muted">${i + 1}</td>
-            <td><strong>${escapeHtml(r.variant)}</strong></td>
-            <td>${escapeHtml(r.rawPrice)}</td>
-            <td class="price-read">${mpFmtNumber(r.price)}</td>
-          </tr>`).join('')}</tbody>
-      </table>
-    </div>
-    ${p.rows.length > MP_PREVIEW_ROWS ? `<div class="muted small mt-2">Mostrando as primeiras ${MP_PREVIEW_ROWS} de ${p.rows.length} linhas.</div>` : ''}`;
 
   box.innerHTML = `
     ${banner}
-    <div class="stats">
-      <div class="stat"><span>Linhas lidas</span><strong>${p.totalLines}</strong></div>
-      <div class="stat stat-ok"><span>Válidas</span><strong>${p.rows.length}</strong></div>
-      <div class="stat ${p.ignored.length ? 'stat-fail' : ''}"><span>Ignoradas</span><strong>${p.ignored.length}</strong></div>
-      <div class="stat"><span>Repetidas</span><strong>${p.duplicates.length}</strong></div>
-      <div class="stat"><span>Menor preço</span><strong>${mpFmtNumber(p.minPrice)}</strong></div>
-      <div class="stat"><span>Maior preço</span><strong>${mpFmtNumber(p.maxPrice)}</strong></div>
-    </div>
-    <div class="muted small mb-2">Cabeçalho ${p.headerFound ? 'encontrado' : 'NÃO encontrado (usei a ordem padrão das colunas)'} · separador: ${p.delim === '\t' ? 'tabulação (Excel)' : '"' + p.delim + '"'}</div>
     <div class="col-chips">${chips}</div>
-    ${ignoredWarn}
-    ${dupWarn}
-    ${invalid ? '' : table}`;
+    ${catalogBlock}
+    ${conflictWarn}
+    ${table}
+    ${ignoredNote}`;
 }
 
 function mpRenderSaveProof() {
@@ -320,7 +334,7 @@ function mpRenderSaveProof() {
       <div>
         <div class="result-title">${ok ? 'SALVO' : 'FALHA AO SALVAR'}</div>
         <div class="result-sub">${escapeHtml(mpCountry(s.code).name)} · ${mpFmtDate(s.savedAt)} · preço da coluna <strong>${s.priceColumn}</strong> ·
-          conferência na leitura de volta: <strong>${s.matched} de ${s.expected}</strong> ${MP_KEY_COLUMN} com o mesmo preço.</div>
+          conferência na leitura de volta: <strong>${s.matched} de ${s.expected}</strong> registros (${MP_KEY_COLUMN} + catálogo) com o mesmo preço.</div>
       </div>
     </div>`;
 }
@@ -332,41 +346,52 @@ function mpRenderSaved() {
 
   document.getElementById('mpSavedCards').innerHTML = MP_COUNTRIES.map(k => {
     const s = all[k.code];
-    const prices = s ? s.rows.map(r => r[1]) : [];
+    const cats = s ? mpSavedCatalogs(s) : [];
     return `
       <div class="saved-card ${k.code === code ? 'active' : ''} ${s ? '' : 'empty'}">
         <div class="saved-card-head"><strong>${escapeHtml(k.name)}</strong><span>${k.code}</span></div>
         ${s ? `
-          <div class="saved-card-count">${s.rows.length}<small> modelos</small></div>
+          <div class="saved-card-count">${s.rows.length}<small> registros</small></div>
           <div class="muted small">Preço de: <strong>${s.priceColumn}</strong></div>
-          <div class="muted small">Mín.: ${mpFmtNumber(Math.min(...prices))} · máx.: ${mpFmtNumber(Math.max(...prices))}</div>
-          <div class="muted small">Salvo em ${mpFmtDate(s.savedAt)}</div>`
+          <div class="saved-card-cats">${cats.map(x => `<span class="catalog-tag">${escapeHtml(x.name)} <small>${x.count}</small></span>`).join('')}</div>
+          <div class="muted small mt-1">Salvo em ${mpFmtDate(s.savedAt)}</div>`
           : '<div class="muted small mt-2">Nenhuma planilha salva.</div>'}
       </div>`;
   }).join('');
 
   const s = all[code];
   const tableBox = document.getElementById('mpSavedTable');
+  const catSelect = document.getElementById('mpCatalogFilter');
   document.getElementById('mpSavedTitle').textContent = `Dados salvos - ${c.name}`;
   document.getElementById('mpDelete').disabled = !s;
   document.getElementById('mpFilter').disabled = !s;
+  catSelect.disabled = !s;
 
   if (!s) {
+    catSelect.innerHTML = '<option value="">Todos os catálogos</option>';
     tableBox.innerHTML = '<div class="muted">Nada salvo para este país ainda.</div>';
     return;
   }
+
+  const prevSel = catSelect.value;
+  const cats = mpSavedCatalogs(s);
+  catSelect.innerHTML = '<option value="">Todos os catálogos</option>' +
+    cats.map(x => `<option value="${escapeHtml(x.name)}">${escapeHtml(x.name)} (${x.count})</option>`).join('');
+  catSelect.value = cats.some(x => x.name === prevSel) ? prevSel : '';
+
   const q = mpNormKey(document.getElementById('mpFilter').value);
-  const filtered = q ? s.rows.filter(r => mpNormKey(r[0]).includes(q)) : s.rows;
+  const cat = catSelect.value;
+  const filtered = s.rows.filter(r => (!q || mpNormKey(r[0]).includes(q)) && (!cat || r[1] === cat));
   const shown = filtered.slice(0, MP_SAVED_ROWS);
 
   tableBox.innerHTML = `
     <div class="table-wrap">
       <table class="table table-sm table-dark table-bordered mb-0">
-        <thead><tr><th>${MP_KEY_COLUMN}</th><th>${s.priceColumn} (preço salvo)</th></tr></thead>
-        <tbody>${shown.map(r => `<tr><td><strong>${escapeHtml(r[0])}</strong></td><td class="price-read">${mpFmtNumber(r[1])}</td></tr>`).join('')}</tbody>
+        <thead><tr><th>${MP_KEY_COLUMN}</th><th>${MP_CATALOG_COLUMN}</th><th>${s.priceColumn} (preço salvo)</th></tr></thead>
+        <tbody>${shown.map(r => `<tr><td><strong>${escapeHtml(r[0])}</strong></td><td>${escapeHtml(r[1])}</td><td class="price-read">${mpFmtNumber(r[2])}</td></tr>`).join('')}</tbody>
       </table>
     </div>
-    <div class="muted small mt-2">${filtered.length} de ${s.rows.length} modelos${filtered.length > MP_SAVED_ROWS ? ` (mostrando ${MP_SAVED_ROWS})` : ''}.</div>`;
+    <div class="muted small mt-2">${filtered.length} de ${s.rows.length} registros${filtered.length > MP_SAVED_ROWS ? ` (mostrando ${MP_SAVED_ROWS})` : ''}.</div>`;
 }
 
 function mpRenderAll() {
@@ -385,6 +410,7 @@ function mpRenderAll() {
 function mpReparse() {
   const text = cleanInvisible(document.getElementById('mpText').value);
   mpState.parsed = text.trim() ? mpParse(text, mpCountry().priceColumn) : null;
+  mpState.previewCatalog = '';
 }
 
 function mpSelectCountry(code) {
@@ -392,6 +418,7 @@ function mpSelectCountry(code) {
   mpState.country = code;
   document.getElementById('mpText').value = mpState.drafts[code] || '';
   document.getElementById('mpFilter').value = '';
+  document.getElementById('mpCatalogFilter').value = '';
   mpReparse();
   mpRenderAll();
 }
@@ -409,7 +436,7 @@ function mpSave() {
   const code = mpState.country;
   const c = mpCountry();
   const prev = mpLoadAll()[code];
-  if (prev && !confirm(`Já existe planilha salva para ${c.name} (${prev.rows.length} modelos, ${mpFmtDate(prev.savedAt)}).\nSubstituir?`)) return;
+  if (prev && !confirm(`Já existe planilha salva para ${c.name} (${prev.rows.length} registros, ${mpFmtDate(prev.savedAt)}).\nSubstituir?`)) return;
   try {
     const saved = mpSaveCountry(code, p);
     const v = mpVerifySaved(code, p);
@@ -441,7 +468,6 @@ function mpClearText() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  try { localStorage.removeItem('sds.minPrices.v1'); } catch { /* ignora */ }
   let timer;
   document.getElementById('mpText').addEventListener('input', () => {
     clearTimeout(timer);
@@ -451,10 +477,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const btn = e.target.closest('[data-country]');
     if (btn) mpSelectCountry(btn.dataset.country);
   });
+  document.getElementById('mpRecognition').addEventListener('click', e => {
+    const pill = e.target.closest('[data-catalog]');
+    if (!pill) return;
+    mpState.previewCatalog = pill.dataset.catalog;
+    mpRenderRecognition();
+  });
   document.getElementById('mpSave').addEventListener('click', mpSave);
   document.getElementById('mpClear').addEventListener('click', mpClearText);
   document.getElementById('mpDelete').addEventListener('click', mpDelete);
   document.getElementById('mpFilter').addEventListener('input', mpRenderSaved);
+  document.getElementById('mpCatalogFilter').addEventListener('change', mpRenderSaved);
   mpRenderAll();
 });
 

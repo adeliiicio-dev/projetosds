@@ -126,7 +126,7 @@
             <i class="bi bi-table text-accent fs-4"></i>
             <h4 class="m-0" id="mpCardTitle">Planilha do dia</h4>
           </div>
-          <p class="muted mb-3">Abra a planilha, selecione tudo (Ctrl+A), copie (Ctrl+C) e cole abaixo (Ctrl+V). O sistema salva Variant_Product e o preço do país (Minimum_Product_Price; no Chile, MSP).</p>
+          <p class="muted mb-3">Abra a planilha, selecione tudo (Ctrl+A), copie (Ctrl+C) e cole abaixo (Ctrl+V). O sistema salva Variant_Product, Catalog_version e o preço do país (Minimum_Product_Price; no Chile, MSP).</p>
 
           <textarea id="mpText" class="form-control pumi-textarea" rows="7"
             placeholder="Cole aqui a planilha do país selecionado..." spellcheck="false"></textarea>
@@ -156,6 +156,9 @@
           <div class="d-flex flex-wrap gap-2 mb-3">
             <input type="text" id="mpFilter" class="form-control form-control-sm" style="max-width: 320px"
               placeholder="Filtrar por Variant_Product..." />
+            <select id="mpCatalogFilter" class="form-select form-select-sm" style="max-width: 240px">
+              <option value="">Todos os catálogos</option>
+            </select>
             <button class="btn btn-sm btn-outline-danger" id="mpDelete"><i class="bi bi-trash"></i> Apagar dados do país</button>
           </div>
           <div id="mpSavedTable"></div>
