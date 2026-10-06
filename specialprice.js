@@ -8,6 +8,7 @@ const SP_SITE_CATALOG = {
     eStore: 'clEstoreProductCatalog',
     Marketplace: 'cl3pdProductCatalog',
     EPP: 'clEppProductCatalog',
+    SME: 'clsmeProductCatalog',
     SMB: 'clEppSMBProductCatalog'
   },
   CO: {},
