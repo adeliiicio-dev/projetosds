@@ -82,34 +82,59 @@ function decodeBytesWithCharset(bytes, charset) {
   catch { return new TextDecoder('utf-8').decode(bytes); }
 }
 
-function collectTextParts(raw, parts, depth = 0) {
+// Remove caracteres invisíveis (usados como "preenchimento" em e-mails automáticos).
+function cleanInvisible(text) {
+  return text
+    .replace(/[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u00AD\u034F\u061C\u180E\uFEFF]/g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function collectTextParts(raw, parts, info, depth = 0) {
   if (depth > 10) return;
   const { headers, body } = splitEntity(raw);
   const ctype = headers['content-type'] || 'text/plain';
   const lower = ctype.toLowerCase();
+  const encoding = (headers['content-transfer-encoding'] || '7bit').toLowerCase();
+  const charset = (ctype.match(/charset="?([^";]+)"?/i) || [])[1] || '';
+  const typeName = (lower.split(';')[0] || '').trim();
 
   if (lower.startsWith('multipart/')) {
-    const bm = ctype.match(/boundary="?([^";]+)"?/i);
-    if (!bm) return;
-    const delim = '--' + bm[1];
-    body.split(delim).slice(1).forEach(chunk => {
-      if (chunk.startsWith('--')) return;
-      collectTextParts(chunk.replace(/^\r?\n/, ''), parts, depth + 1);
+    const bm = ctype.match(/boundary\s*=\s*"?([^";\s]+)"?/i);
+    if (!bm) { info.push({ type: typeName, status: 'sem boundary, ignorado' }); return; }
+    info.push({ type: typeName, status: 'container' });
+    // Delimitador sempre no início da linha (evita confundir boundaries parecidos).
+    const delim = new RegExp('(?:^|\\r?\\n)--' + escapeRegex(bm[1]) + '(?:--)?[ \\t]*(?=\\r?\\n|$)');
+    const chunks = body.split(delim);
+    chunks.slice(1).forEach(chunk => {
+      if (!chunk.trim()) return;
+      collectTextParts(chunk.replace(/^\r?\n/, ''), parts, info, depth + 1);
     });
     return;
   }
   if (lower.startsWith('message/rfc822')) {
-    collectTextParts(body, parts, depth + 1);
+    info.push({ type: typeName, status: 'e-mail anexado' });
+    collectTextParts(body, parts, info, depth + 1);
     return;
   }
-  const disposition = (headers['content-disposition'] || '').toLowerCase();
-  const isText = lower.startsWith('text/plain') || lower.startsWith('text/html') || !headers['content-type'];
-  if (!isText || disposition.startsWith('attachment')) return;
+  const isText = typeName.startsWith('text/') || !headers['content-type'];
+  if (!isText || typeName === 'text/calendar') {
+    info.push({ type: typeName, encoding, size: body.length, status: 'ignorado (não é texto)' });
+    return;
+  }
 
-  const charset = (ctype.match(/charset="?([^";]+)"?/i) || [])[1];
-  const bytes = decodeBodyBytes(body, headers['content-transfer-encoding']);
-  const text = decodeBytesWithCharset(bytes, charset);
-  parts.push(lower.startsWith('text/html') ? htmlToText(text) : text);
+  const bytes = decodeBodyBytes(body, encoding);
+  const decoded = cleanInvisible(decodeBytesWithCharset(bytes, charset));
+  const text = typeName === 'text/html' ? htmlToText(decoded) : decoded;
+  parts.push(text);
+  info.push({
+    type: typeName, encoding, charset: charset || '(não informado)',
+    size: bytes.length, chars: flattenSpaces(text).length, status: 'lido',
+    preview: flattenSpaces(text).slice(0, 200)
+  });
 }
 
 function readEml(buffer) {
@@ -120,7 +145,8 @@ function readEml(buffer) {
   }
   const { headers } = splitEntity(raw);
   const parts = [];
-  collectTextParts(raw, parts);
+  const partsInfo = [];
+  collectTextParts(raw, parts, partsInfo);
 
   const meta = {
     from: decodeMimeWordsPumi(headers.from || ''),
@@ -130,7 +156,9 @@ function readEml(buffer) {
     date: headers.date || ''
   };
   const text = [meta.from, meta.to, meta.cc, meta.subject, ...parts].join('\n');
-  return { meta, text, note: '' };
+  const readCount = partsInfo.filter(p => p.status === 'lido').length;
+  const note = readCount === 0 ? 'Nenhuma parte de texto foi encontrada neste e-mail.' : '';
+  return { meta, text, searchText: text, note, partsInfo };
 }
 
 /* ---------- Leitura de .msg ---------- */

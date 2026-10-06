@@ -127,7 +127,7 @@ function renderPumi() {
     zone.classList.remove('has-file');
     return;
   }
-  const { file, meta, text, note, result } = state.pumi;
+  const { file, meta, text, note, result, partsInfo } = state.pumi;
   zone.classList.add('has-file');
   info.classList.remove('d-none');
   info.innerHTML = `
@@ -145,7 +145,16 @@ function renderPumi() {
     <details class="mt-3">
       <summary class="muted">Ver texto lido do arquivo</summary>
       <div class="email-body">${escapeHtml(flattenSpaces(text).slice(0, 20000))}</div>
-    </details>`;
+    </details>
+    ${partsInfo.length ? `
+    <details class="mt-2">
+      <summary class="muted">Ver estrutura do e-mail (partes lidas)</summary>
+      <div class="email-body">${partsInfo.map(p => escapeHtml(
+        [p.type || '(sem tipo)', p.encoding, p.charset && 'charset ' + p.charset,
+         p.size != null && formatSize(p.size), p.chars != null && p.chars + ' caracteres', p.status]
+          .filter(Boolean).join(' · ') + (p.preview ? '\n   início: ' + p.preview : '')
+      )).join('\n\n')}</div>
+    </details>` : ''}`;
 }
 
 async function handlePumi(file) {
@@ -154,8 +163,8 @@ async function handlePumi(file) {
     return;
   }
   try {
-    const { meta, text, searchText, note } = await readPumiFile(file);
-    state.pumi = { file, meta, text, note, result: checkPumi(searchText || text) };
+    const { meta, text, searchText, note, partsInfo } = await readPumiFile(file);
+    state.pumi = { file, meta, text, note, partsInfo: partsInfo || [], result: checkPumi(searchText || text) };
     renderPumi();
     updateStartButton();
   } catch (err) {
