@@ -146,11 +146,9 @@ function scanBinaryStrings(buffer) {
 }
 
 async function loadMsgReader() {
-  const mod = await import('https://esm.sh/@kenjiuno/msgreader@1.22.0');
-  const candidates = [mod.default, mod.default && mod.default.default, mod.MsgReader, mod.default && mod.default.MsgReader];
-  const Ctor = candidates.find(c => typeof c === 'function');
-  if (!Ctor) throw new Error('MsgReader não encontrado');
-  return Ctor;
+  // Biblioteca local: vendor/msgreader.bundle.js (expõe window.MsgReaderLib)
+  if (typeof MsgReaderLib !== 'function') throw new Error('MsgReader não encontrado');
+  return MsgReaderLib;
 }
 
 async function readMsg(buffer) {
