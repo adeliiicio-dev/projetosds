@@ -137,13 +137,46 @@ function collectTextParts(raw, parts, info, depth = 0) {
   });
 }
 
+// Pega o valor de um cabeçalho em qualquer ponto do início do arquivo (com linhas dobradas).
+function pickHeader(raw, name) {
+  const head = raw.slice(0, 30000).replace(/\r?\n[ \t]+/g, ' ');
+  const m = head.match(new RegExp('^' + name + ':[ \\t]*([^\\r\\n]*)', 'im'));
+  return m ? m[1].trim() : '';
+}
+
+// Garante que a leitura comece nos cabeçalhos MIME, mesmo com linhas em branco/BOM no início.
+function normalizeRoot(raw) {
+  raw = raw.replace(/^(?:\xEF\xBB\xBF|\uFEFF|[\s\0])+/, '');
+  if (!splitEntity(raw).headers['content-type']) {
+    const m = raw.match(/^content-type:/im);
+    if (m && m.index > 0) raw = raw.slice(m.index);
+  }
+  return raw;
+}
+
 function readEml(buffer) {
   const bytes = new Uint8Array(buffer);
   let raw = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    raw += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  const utf16 = bytes.length > 1 &&
+    ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF));
+  if (utf16) {
+    raw = new TextDecoder(bytes[0] === 0xFF ? 'utf-16le' : 'utf-16be').decode(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      raw += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
   }
-  const { headers } = splitEntity(raw);
+  const original = raw;
+  raw = normalizeRoot(raw);
+  let { headers } = splitEntity(raw);
+  headers = {
+    ...headers,
+    from: headers.from || pickHeader(original, 'from'),
+    to: headers.to || pickHeader(original, 'to'),
+    cc: headers.cc || pickHeader(original, 'cc'),
+    subject: headers.subject || pickHeader(original, 'subject'),
+    date: headers.date || pickHeader(original, 'date')
+  };
   const parts = [];
   const partsInfo = [];
   collectTextParts(raw, parts, partsInfo);
