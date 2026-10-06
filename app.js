@@ -55,7 +55,7 @@ function hasExt(file, exts) {
 }
 
 function updateStartButton() {
-  document.getElementById('btnIniciar').disabled = !(state.pumi && state.template);
+  document.getElementById('btnIniciar').disabled = !(state.pumi && state.pumi.result && state.template);
 }
 
 /* ===== PUMI (e-mail) ===== */
@@ -141,6 +141,17 @@ function renderPumi() {
     </dl>`;
 
   resultBox.classList.remove('d-none');
+  if (!result) {
+    resultBox.innerHTML = `
+      <div class="result-banner result-fail">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <div>
+          <div class="result-title">NÃO FOI POSSÍVEL LER O ARQUIVO</div>
+          <div class="result-sub">${escapeHtml(state.pumi.unreadable)}</div>
+        </div>
+      </div>`;
+    return;
+  }
   resultBox.innerHTML = renderPumiResult(result) + `
     <details class="mt-3">
       <summary class="muted">Ver texto lido do arquivo</summary>
@@ -163,8 +174,11 @@ async function handlePumi(file) {
     return;
   }
   try {
-    const { meta, text, searchText, note, partsInfo } = await readPumiFile(file);
-    state.pumi = { file, meta, text, note, partsInfo: partsInfo || [], result: checkPumi(searchText || text) };
+    const { meta, text, searchText, note, partsInfo, unreadable } = await readPumiFile(file);
+    state.pumi = {
+      file, meta, text, note, unreadable, partsInfo: partsInfo || [],
+      result: unreadable ? null : checkPumi(searchText || text)
+    };
     renderPumi();
     updateStartButton();
   } catch (err) {

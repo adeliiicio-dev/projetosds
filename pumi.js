@@ -400,10 +400,55 @@ function checkPumi(rawText) {
   };
 }
 
+// Identifica o tipo real do arquivo pelos primeiros bytes (não pela extensão).
+function detectMagic(bytes) {
+  const hex = Array.from(bytes.subarray(0, 16), b => b.toString(16).padStart(2, '0')).join(' ');
+  const starts = (...sig) => sig.every((b, i) => bytes[i] === b);
+  let kind = null, label = '';
+  if (starts(0xD0, 0xCF, 0x11, 0xE0)) { kind = 'ole'; label = 'formato .msg do Outlook'; }
+  else if (starts(0x50, 0x4B, 0x03, 0x04)) { kind = 'zip'; label = 'arquivo compactado (ZIP)'; }
+  else if (starts(0x1F, 0x8B)) { kind = 'gzip'; label = 'arquivo compactado (GZIP)'; }
+  else if (starts(0x25, 0x50, 0x44, 0x46)) { kind = 'pdf'; label = 'PDF'; }
+  return { kind, label, hex };
+}
+
+function looksBinary(bytes) {
+  const n = Math.min(bytes.length, 8000);
+  if (!n) return false;
+  let ctrl = 0;
+  for (let i = 0; i < n; i++) {
+    const b = bytes[i];
+    if (b === 0) { if (i > 1 && bytes[i - 1] !== 0) ctrl++; continue; }
+    if (b < 9 || b === 11 || b === 12 || (b > 13 && b < 32)) ctrl++;
+  }
+  return ctrl / n > 0.02;
+}
+
 async function readPumiFile(file) {
   const buffer = await file.arrayBuffer();
-  const isMsg = file.name.toLowerCase().endsWith('.msg');
-  return isMsg ? readMsg(buffer) : readEml(buffer);
+  const bytes = new Uint8Array(buffer);
+  const magic = detectMagic(bytes);
+  const isMsgExt = file.name.toLowerCase().endsWith('.msg');
+
+  // .msg de verdade, mesmo com extensão .eml
+  if (magic.kind === 'ole') {
+    const r = await readMsg(buffer);
+    if (!isMsgExt) r.note = ((r.note ? r.note + ' ' : '') + 'O arquivo é um .msg do Outlook com extensão .eml.').trim();
+    return r;
+  }
+  if (isMsgExt) return readMsg(buffer);
+
+  const utf16 = bytes.length > 1 && ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF));
+  if (!utf16 && (magic.kind || looksBinary(bytes))) {
+    const what = magic.label || 'conteúdo binário (provavelmente criptografado ou protegido)';
+    return {
+      meta: { from: '', to: '', cc: '', subject: '', date: '' },
+      text: '', searchText: '', partsInfo: [],
+      note: '',
+      unreadable: `Este arquivo não é um e-mail em texto: parece ${what}. Primeiros bytes: ${magic.hex}`
+    };
+  }
+  return readEml(buffer);
 }
 
 if (typeof module !== 'undefined') {
