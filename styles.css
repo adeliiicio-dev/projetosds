@@ -357,3 +357,10 @@ h1 {
 .saved-card-head span { font-size: .72rem; font-weight: 800; color: var(--accent-primary); letter-spacing: .08em; }
 .saved-card-count { font-size: 1.8rem; font-weight: 800; color: #6ee7b7; }
 .saved-card-count small { font-size: .85rem; color: var(--text-muted); font-weight: 500; }
+
+.check-warn { border-left-color: #fbbf24; }
+.check-warn .check-head > i { color: #fbbf24; }
+.mark-warn { background: rgba(251, 191, 36, .3); color: #fde68a; padding: 0 4px; border-radius: 3px; }
+.col-chip em { display: block; font-style: normal; font-size: .72rem; font-weight: 700; margin-top: 2px; color: #6ee7b7; }
+.col-chip em.off { color: var(--text-muted); font-weight: 500; }
+.chip-off { opacity: .55; }

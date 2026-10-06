@@ -1,24 +1,34 @@
 /* ===== Minimum prices: colar planilha por país, reconhecer, salvar e provar ===== */
 
 const MP_COUNTRIES = [
-  { code: 'CL', name: 'Chile' },
-  { code: 'CO', name: 'Colômbia' },
-  { code: 'PE', name: 'Peru' },
-  { code: 'MX', name: 'México' }
+  { code: 'CL', name: 'Chile', priceColumn: 'MSP' },                         // exceção: Chile usa MSP
+  { code: 'CO', name: 'Colômbia', priceColumn: 'Minimum_Product_Price' },
+  { code: 'PE', name: 'Peru', priceColumn: 'Minimum_Product_Price' },
+  { code: 'MX', name: 'México', priceColumn: 'Minimum_Product_Price' }
 ];
 
-const MP_COLUMNS = ['modelCode', 'modelName', 'category', 'unit', 'minQuantityToPurchase', 'catalogVersion', 'minProductPrice'];
-const MP_REQUIRED = ['modelCode', 'minProductPrice'];
-const MP_STORAGE_KEY = 'sds.minPrices.v1';
+const MP_KEY_COLUMN = 'Variant_Product';
+
+const MP_COLUMNS = [
+  'Variant_Product', 'Minimum_Product_Price', 'Catalog_version', 'Catalog_status',
+  'Product_Division_Category', 'Sales Status', 'Approval Status', 'MSP',
+  'allow Sync MSP Price', 'enable MSP Special Price Validation', 'BaseProduct', 'RRP'
+];
+
+const MP_STORAGE_KEY = 'sds.minPrices.v2';
 const MP_PREVIEW_ROWS = 50;
 const MP_SAVED_ROWS = 100;
 
 const mpState = {
   country: 'CL',
-  drafts: {},   // texto colado por país (só em memória)
+  drafts: {},    // texto colado por país (só em memória)
   parsed: null,
   lastSave: null // { code, savedAt, expected, matched }
 };
+
+function mpCountry(code) {
+  return MP_COUNTRIES.find(c => c.code === (code || mpState.country));
+}
 
 /* ---------- Leitura da planilha colada ---------- */
 
@@ -57,18 +67,21 @@ function mpDetectDelimiter(line) {
   return counts[0].n > 0 ? counts[0].d : '\t';
 }
 
-function mpParse(text) {
+// priceColumn: coluna de onde sai o preço salvo (depende do país).
+function mpParse(text, priceColumn) {
   const lines = text.replace(/\r/g, '').split('\n')
     .map((content, i) => ({ content, lineNo: i + 1 }))
     .filter(l => l.content.trim() !== '');
   if (!lines.length) return null;
 
-  // Procura a linha de cabeçalho (com modelCode) nas primeiras linhas.
+  const keyNorm = mpNormKey(MP_KEY_COLUMN);
+
+  // Procura a linha de cabeçalho (com Variant_Product) nas primeiras linhas.
   let headerIdx = -1, delim = '\t';
   for (let i = 0; i < Math.min(lines.length, 10); i++) {
     const d = mpDetectDelimiter(lines[i].content);
     const cells = lines[i].content.split(d).map(c => mpNormKey(mpStripQuotes(c)));
-    if (cells.includes('modelcode')) { headerIdx = i; delim = d; break; }
+    if (cells.includes(keyNorm)) { headerIdx = i; delim = d; break; }
   }
   const headerFound = headerIdx >= 0;
   if (!headerFound) delim = mpDetectDelimiter(lines[0].content);
@@ -83,44 +96,42 @@ function mpParse(text) {
     MP_COLUMNS.forEach((col, i) => { columns[col] = i; });
   }
 
+  const required = [MP_KEY_COLUMN, priceColumn];
+  const missingRequired = required.filter(c => columns[c] < 0);
+
   const dataLines = lines.slice(headerFound ? headerIdx + 1 : 0);
-  const byCode = new Map();
+  const byKey = new Map();
   const ignored = [];
   const duplicates = new Map();
 
-  const missingRequired = MP_REQUIRED.filter(c => columns[c] < 0);
   if (!missingRequired.length) {
     dataLines.forEach(({ content, lineNo }) => {
       const cells = content.split(delim).map(mpStripQuotes);
-      const get = col => (columns[col] >= 0 ? (cells[columns[col]] ?? '') : '');
-      const code = get('modelCode').trim();
-      if (mpNormKey(code) === 'modelcode') return; // cabeçalho repetido
-      if (!code) { ignored.push({ lineNo, reason: 'modelCode vazio', content }); return; }
-      const rawPrice = get('minProductPrice');
+      const get = col => (cells[columns[col]] ?? '').trim();
+      const variant = get(MP_KEY_COLUMN);
+      if (mpNormKey(variant) === keyNorm) return; // cabeçalho repetido
+      if (!variant) { ignored.push({ lineNo, reason: `${MP_KEY_COLUMN} vazio`, content }); return; }
+      const rawPrice = get(priceColumn);
       const price = mpParsePrice(rawPrice);
       if (price === null) {
-        ignored.push({ lineNo, reason: `minProductPrice inválido: "${rawPrice}"`, content });
+        ignored.push({ lineNo, reason: `${priceColumn} inválido: "${rawPrice}"`, content });
         return;
       }
-      const key = code.toUpperCase();
-      if (byCode.has(key)) {
-        const d = duplicates.get(key) || { code, lines: [byCode.get(key).lineNo], prices: [byCode.get(key).minProductPrice] };
+      const key = variant.toUpperCase();
+      if (byKey.has(key)) {
+        const d = duplicates.get(key) || { code: variant, lines: [byKey.get(key).lineNo], prices: [byKey.get(key).price] };
         d.lines.push(lineNo);
         d.prices.push(price);
         duplicates.set(key, d);
       }
-      byCode.set(key, {
-        lineNo, modelCode: code, modelName: get('modelName').trim(), category: get('category').trim(),
-        unit: get('unit').trim(), minQuantityToPurchase: get('minQuantityToPurchase').trim(),
-        catalogVersion: get('catalogVersion').trim(), minProductPriceRaw: rawPrice.trim(), minProductPrice: price
-      });
+      byKey.set(key, { lineNo, variant, rawPrice, price });
     });
   }
 
-  const rows = Array.from(byCode.values());
-  const prices = rows.map(r => r.minProductPrice);
+  const rows = Array.from(byKey.values());
+  const prices = rows.map(r => r.price);
   return {
-    delim, headerFound, headerCells, columns, missingRequired,
+    priceColumn, delim, headerFound, headerCells, columns, missingRequired,
     totalLines: dataLines.length,
     rows, ignored, duplicates: Array.from(duplicates.values()),
     minPrice: prices.length ? Math.min(...prices) : null,
@@ -130,20 +141,19 @@ function mpParse(text) {
 
 /* ---------- Armazenamento (localStorage do navegador) ---------- */
 
-const MP_FIELDS = ['modelCode', 'modelName', 'category', 'unit', 'minQuantityToPurchase', 'catalogVersion', 'minProductPrice'];
-
 function mpLoadAll() {
   try { return JSON.parse(localStorage.getItem(MP_STORAGE_KEY)) || {}; }
   catch { return {}; }
 }
 
+// Salva por país: Variant_Product -> preço (da coluna indicada em priceColumn).
 function mpSaveCountry(code, parsed) {
   const all = mpLoadAll();
   all[code] = {
     country: code,
     savedAt: new Date().toISOString(),
-    fields: MP_FIELDS,
-    rows: parsed.rows.map(r => MP_FIELDS.map(f => r[f]))
+    priceColumn: parsed.priceColumn,
+    rows: parsed.rows.map(r => [r.variant, r.price])
   };
   localStorage.setItem(MP_STORAGE_KEY, JSON.stringify(all)); // pode lançar erro de cota
   return all[code];
@@ -155,18 +165,14 @@ function mpDeleteCountry(code) {
   localStorage.setItem(MP_STORAGE_KEY, JSON.stringify(all));
 }
 
-// Lê de volta do armazenamento e compara cada modelCode -> minProductPrice com o que foi colado.
+// Lê de volta do armazenamento e compara cada Variant_Product -> preço com o que foi colado.
 function mpVerifySaved(code, parsed) {
   const saved = mpLoadAll()[code];
   const map = new Map();
-  if (saved) {
-    const iCode = saved.fields.indexOf('modelCode');
-    const iPrice = saved.fields.indexOf('minProductPrice');
-    saved.rows.forEach(r => map.set(String(r[iCode]).toUpperCase(), r[iPrice]));
-  }
+  if (saved) saved.rows.forEach(r => map.set(String(r[0]).toUpperCase(), r[1]));
   let matched = 0;
   parsed.rows.forEach(r => {
-    if (map.get(r.modelCode.toUpperCase()) === r.minProductPrice) matched++;
+    if (map.get(r.variant.toUpperCase()) === r.price) matched++;
   });
   return { expected: parsed.rows.length, matched, stored: map.size };
 }
@@ -179,10 +185,6 @@ function mpFmtNumber(n) {
 
 function mpFmtDate(iso) {
   return iso ? new Date(iso).toLocaleString('pt-BR') : '-';
-}
-
-function mpCountryName(code) {
-  return MP_COUNTRIES.find(c => c.code === code).name;
 }
 
 /* ---------- Renderização ---------- */
@@ -200,11 +202,27 @@ function mpRenderTabs() {
   }).join('');
 }
 
+function mpRenderNotice() {
+  const c = mpCountry();
+  const isException = c.priceColumn !== 'Minimum_Product_Price';
+  document.getElementById('mpNotice').innerHTML = isException
+    ? `<div class="check-item check-warn">
+         <div class="check-head"><i class="bi bi-exclamation-triangle-fill"></i>
+           <strong>Atenção: ${escapeHtml(c.name)} é exceção.</strong>
+           <span>O preço salvo vem da coluna <mark class="mark-warn">${c.priceColumn}</mark>, e não de Minimum_Product_Price.</span></div>
+       </div>`
+    : `<div class="check-item check-info">
+         <div class="check-head"><i class="bi bi-info-circle-fill"></i>
+           <strong>${escapeHtml(c.name)}:</strong>
+           <span>salva ${MP_KEY_COLUMN} + <mark>${c.priceColumn}</mark>.</span></div>
+       </div>`;
+}
+
 function mpRenderRecognition() {
   const box = document.getElementById('mpRecognition');
   const saveBtn = document.getElementById('mpSave');
   const p = mpState.parsed;
-  const name = mpCountryName(mpState.country);
+  const c = mpCountry();
 
   if (!p) {
     box.innerHTML = '';
@@ -222,30 +240,31 @@ function mpRenderRecognition() {
            <div class="result-title">PLANILHA NÃO RECONHECIDA</div>
            <div class="result-sub">${p.missingRequired.length
              ? `Coluna obrigatória não encontrada: ${p.missingRequired.join(', ')}.`
-             : 'Nenhuma linha válida (modelCode e minProductPrice preenchidos).'}</div>
+             : `Nenhuma linha válida (${MP_KEY_COLUMN} e ${p.priceColumn} preenchidos).`}</div>
          </div>
        </div>`
     : `<div class="result-banner result-ok">
          <i class="bi bi-check-circle-fill"></i>
          <div>
            <div class="result-title">PLANILHA RECONHECIDA</div>
-           <div class="result-sub">${p.rows.length} modelos válidos para ${escapeHtml(name)}. Confira abaixo e clique em salvar.</div>
+           <div class="result-sub">${p.rows.length} modelos válidos para ${escapeHtml(c.name)} (${MP_KEY_COLUMN} + ${p.priceColumn}). Confira abaixo e clique em salvar.</div>
          </div>
        </div>`;
 
   const chips = MP_COLUMNS.map(col => {
     const idx = p.columns[col];
     const found = idx >= 0;
-    const required = MP_REQUIRED.includes(col);
-    const cls = found ? 'chip-ok' : (required ? 'chip-fail' : 'chip-warn');
+    const used = col === MP_KEY_COLUMN || col === p.priceColumn;
+    const cls = used ? (found ? 'chip-ok' : 'chip-fail') : (found ? '' : 'chip-off');
     const where = found
-      ? (p.headerFound ? `coluna ${idx + 1} ("${escapeHtml(p.headerCells[idx])}")` : `coluna ${idx + 1} (por posição)`)
-      : (required ? 'NÃO ENCONTRADA' : 'não encontrada (opcional)');
-    return `<div class="col-chip ${cls}"><strong>${col}</strong><span>${where}</span></div>`;
+      ? (p.headerFound ? `coluna ${idx + 1}` : `coluna ${idx + 1} (por posição)`)
+      : (used ? 'NÃO ENCONTRADA' : 'não encontrada');
+    const tag = used ? `<em>${col === MP_KEY_COLUMN ? 'CHAVE' : 'PREÇO'} · salva</em>` : '<em class="off">não salva</em>';
+    return `<div class="col-chip ${cls}"><strong>${col}</strong><span>${where}</span>${tag}</div>`;
   }).join('');
 
   const dupWarn = p.duplicates.length
-    ? `<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>${p.duplicates.length} modelCode repetido(s)</strong><span>vale a última linha</span></div>
+    ? `<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>${p.duplicates.length} ${MP_KEY_COLUMN} repetido(s)</strong><span>vale a última linha</span></div>
          <div class="check-evidence">${p.duplicates.slice(0, 10).map(d =>
            `<span class="ev-snippet"><mark>${escapeHtml(d.code)}</mark> linhas ${d.lines.join(', ')} · preços ${d.prices.map(mpFmtNumber).join(' / ')}</span>`).join('')}</div></div>`
     : '';
@@ -261,18 +280,13 @@ function mpRenderRecognition() {
   const table = `
     <div class="table-wrap mt-3">
       <table class="table table-sm table-dark table-bordered mb-0">
-        <thead><tr><th>#</th>${MP_COLUMNS.map(c => `<th>${c}</th>`).join('')}<th>Preço lido</th></tr></thead>
+        <thead><tr><th>#</th><th>${MP_KEY_COLUMN}</th><th>${p.priceColumn} (como veio)</th><th>Preço lido (será salvo)</th></tr></thead>
         <tbody>${preview.map((r, i) => `
           <tr>
             <td class="muted">${i + 1}</td>
-            <td title="${escapeHtml(r.modelCode)}"><strong>${escapeHtml(r.modelCode)}</strong></td>
-            <td title="${escapeHtml(r.modelName)}">${escapeHtml(r.modelName)}</td>
-            <td>${escapeHtml(r.category)}</td>
-            <td>${escapeHtml(r.unit)}</td>
-            <td>${escapeHtml(r.minQuantityToPurchase)}</td>
-            <td>${escapeHtml(r.catalogVersion)}</td>
-            <td>${escapeHtml(r.minProductPriceRaw)}</td>
-            <td class="price-read">${mpFmtNumber(r.minProductPrice)}</td>
+            <td><strong>${escapeHtml(r.variant)}</strong></td>
+            <td>${escapeHtml(r.rawPrice)}</td>
+            <td class="price-read">${mpFmtNumber(r.price)}</td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
@@ -305,8 +319,8 @@ function mpRenderSaveProof() {
       <i class="bi ${ok ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}"></i>
       <div>
         <div class="result-title">${ok ? 'SALVO' : 'FALHA AO SALVAR'}</div>
-        <div class="result-sub">${escapeHtml(mpCountryName(s.code))} · ${mpFmtDate(s.savedAt)} ·
-          conferência na leitura de volta: <strong>${s.matched} de ${s.expected}</strong> modelCode com o mesmo minProductPrice.</div>
+        <div class="result-sub">${escapeHtml(mpCountry(s.code).name)} · ${mpFmtDate(s.savedAt)} · preço da coluna <strong>${s.priceColumn}</strong> ·
+          conferência na leitura de volta: <strong>${s.matched} de ${s.expected}</strong> ${MP_KEY_COLUMN} com o mesmo preço.</div>
       </div>
     </div>`;
 }
@@ -314,17 +328,18 @@ function mpRenderSaveProof() {
 function mpRenderSaved() {
   const all = mpLoadAll();
   const code = mpState.country;
-  const name = mpCountryName(code);
+  const c = mpCountry();
 
-  document.getElementById('mpSavedCards').innerHTML = MP_COUNTRIES.map(c => {
-    const s = all[c.code];
-    const prices = s ? s.rows.map(r => r[s.fields.indexOf('minProductPrice')]) : [];
+  document.getElementById('mpSavedCards').innerHTML = MP_COUNTRIES.map(k => {
+    const s = all[k.code];
+    const prices = s ? s.rows.map(r => r[1]) : [];
     return `
-      <div class="saved-card ${c.code === code ? 'active' : ''} ${s ? '' : 'empty'}">
-        <div class="saved-card-head"><strong>${escapeHtml(c.name)}</strong><span>${c.code}</span></div>
+      <div class="saved-card ${k.code === code ? 'active' : ''} ${s ? '' : 'empty'}">
+        <div class="saved-card-head"><strong>${escapeHtml(k.name)}</strong><span>${k.code}</span></div>
         ${s ? `
           <div class="saved-card-count">${s.rows.length}<small> modelos</small></div>
-          <div class="muted small">Preço mín.: ${mpFmtNumber(Math.min(...prices))} · máx.: ${mpFmtNumber(Math.max(...prices))}</div>
+          <div class="muted small">Preço de: <strong>${s.priceColumn}</strong></div>
+          <div class="muted small">Mín.: ${mpFmtNumber(Math.min(...prices))} · máx.: ${mpFmtNumber(Math.max(...prices))}</div>
           <div class="muted small">Salvo em ${mpFmtDate(s.savedAt)}</div>`
           : '<div class="muted small mt-2">Nenhuma planilha salva.</div>'}
       </div>`;
@@ -332,7 +347,7 @@ function mpRenderSaved() {
 
   const s = all[code];
   const tableBox = document.getElementById('mpSavedTable');
-  document.getElementById('mpSavedTitle').textContent = `Dados salvos - ${name}`;
+  document.getElementById('mpSavedTitle').textContent = `Dados salvos - ${c.name}`;
   document.getElementById('mpDelete').disabled = !s;
   document.getElementById('mpFilter').disabled = !s;
 
@@ -341,28 +356,25 @@ function mpRenderSaved() {
     return;
   }
   const q = mpNormKey(document.getElementById('mpFilter').value);
-  const iCode = s.fields.indexOf('modelCode');
-  const iName = s.fields.indexOf('modelName');
-  const filtered = q ? s.rows.filter(r => mpNormKey(r[iCode]).includes(q) || mpNormKey(r[iName]).includes(q)) : s.rows;
+  const filtered = q ? s.rows.filter(r => mpNormKey(r[0]).includes(q)) : s.rows;
   const shown = filtered.slice(0, MP_SAVED_ROWS);
 
   tableBox.innerHTML = `
     <div class="table-wrap">
       <table class="table table-sm table-dark table-bordered mb-0">
-        <thead><tr>${s.fields.map(f => `<th>${f}</th>`).join('')}</tr></thead>
-        <tbody>${shown.map(r => `<tr>${r.map((v, i) => i === s.fields.indexOf('minProductPrice')
-          ? `<td class="price-read">${mpFmtNumber(v)}</td>`
-          : `<td title="${escapeHtml(v)}">${escapeHtml(v)}</td>`).join('')}</tr>`).join('')}</tbody>
+        <thead><tr><th>${MP_KEY_COLUMN}</th><th>${s.priceColumn} (preço salvo)</th></tr></thead>
+        <tbody>${shown.map(r => `<tr><td><strong>${escapeHtml(r[0])}</strong></td><td class="price-read">${mpFmtNumber(r[1])}</td></tr>`).join('')}</tbody>
       </table>
     </div>
     <div class="muted small mt-2">${filtered.length} de ${s.rows.length} modelos${filtered.length > MP_SAVED_ROWS ? ` (mostrando ${MP_SAVED_ROWS})` : ''}.</div>`;
 }
 
 function mpRenderAll() {
-  const name = mpCountryName(mpState.country);
-  document.getElementById('mpCardTitle').textContent = `Planilha do dia - ${name}`;
-  document.getElementById('mpSave').innerHTML = `<i class="bi bi-save"></i> Salvar planilha de ${escapeHtml(name)}`;
+  const c = mpCountry();
+  document.getElementById('mpCardTitle').textContent = `Planilha do dia - ${c.name}`;
+  document.getElementById('mpSave').innerHTML = `<i class="bi bi-save"></i> Salvar planilha de ${escapeHtml(c.name)}`;
   mpRenderTabs();
+  mpRenderNotice();
   mpRenderRecognition();
   mpRenderSaveProof();
   mpRenderSaved();
@@ -370,19 +382,22 @@ function mpRenderAll() {
 
 /* ---------- Ações ---------- */
 
+function mpReparse() {
+  const text = cleanInvisible(document.getElementById('mpText').value);
+  mpState.parsed = text.trim() ? mpParse(text, mpCountry().priceColumn) : null;
+}
+
 function mpSelectCountry(code) {
   mpState.drafts[mpState.country] = document.getElementById('mpText').value;
   mpState.country = code;
-  const text = mpState.drafts[code] || '';
-  document.getElementById('mpText').value = text;
+  document.getElementById('mpText').value = mpState.drafts[code] || '';
   document.getElementById('mpFilter').value = '';
-  mpState.parsed = text.trim() ? mpParse(cleanInvisible(text)) : null;
+  mpReparse();
   mpRenderAll();
 }
 
 function mpOnPaste() {
-  const text = cleanInvisible(document.getElementById('mpText').value);
-  mpState.parsed = text.trim() ? mpParse(text) : null;
+  mpReparse();
   mpState.lastSave = null;
   mpRenderRecognition();
   mpRenderSaveProof();
@@ -392,12 +407,13 @@ function mpSave() {
   const p = mpState.parsed;
   if (!p || !p.rows.length) return;
   const code = mpState.country;
+  const c = mpCountry();
   const prev = mpLoadAll()[code];
-  if (prev && !confirm(`Já existe planilha salva para ${mpCountryName(code)} (${prev.rows.length} modelos, ${mpFmtDate(prev.savedAt)}).\nSubstituir?`)) return;
+  if (prev && !confirm(`Já existe planilha salva para ${c.name} (${prev.rows.length} modelos, ${mpFmtDate(prev.savedAt)}).\nSubstituir?`)) return;
   try {
     const saved = mpSaveCountry(code, p);
     const v = mpVerifySaved(code, p);
-    mpState.lastSave = { code, savedAt: saved.savedAt, expected: v.expected, matched: v.matched };
+    mpState.lastSave = { code, savedAt: saved.savedAt, priceColumn: saved.priceColumn, expected: v.expected, matched: v.matched };
   } catch (err) {
     alert('Não foi possível salvar (armazenamento do navegador cheio?): ' + err.message);
     return;
@@ -409,7 +425,7 @@ function mpSave() {
 
 function mpDelete() {
   const code = mpState.country;
-  if (!confirm(`Apagar os dados salvos de ${mpCountryName(code)}?`)) return;
+  if (!confirm(`Apagar os dados salvos de ${mpCountry(code).name}?`)) return;
   mpDeleteCountry(code);
   mpState.lastSave = null;
   mpRenderAll();
@@ -425,6 +441,7 @@ function mpClearText() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  try { localStorage.removeItem('sds.minPrices.v1'); } catch { /* ignora */ }
   let timer;
   document.getElementById('mpText').addEventListener('input', () => {
     clearTimeout(timer);
