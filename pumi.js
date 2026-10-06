@@ -135,14 +135,68 @@ function readEml(buffer) {
 
 /* ---------- Leitura de .msg ---------- */
 
+// Só trechos legíveis (6+ caracteres imprimíveis seguidos), em UTF-16 e 8 bits.
 function scanBinaryStrings(buffer) {
-  // Plano B: lê o binário como UTF-16 (dois alinhamentos) e como texto simples.
   const bytes = new Uint8Array(buffer);
-  const u16a = new TextDecoder('utf-16le').decode(bytes);
-  const u16b = new TextDecoder('utf-16le').decode(bytes.subarray(1));
-  const latin = new TextDecoder('latin1').decode(bytes);
-  const clean = s => s.replace(/[^\x20-\x7e\u00a0-\u024f\n\r\t]+/g, ' ');
-  return [u16a, u16b, latin].map(clean).join('\n');
+  const decoded = [
+    new TextDecoder('utf-16le').decode(bytes),
+    new TextDecoder('utf-16le').decode(bytes.subarray(1)),
+    new TextDecoder('latin1').decode(bytes)
+  ];
+  const runs = [];
+  decoded.forEach(s => (s.match(/[\x20-\x7e\u00a0-\u024f]{6,}/g) || []).forEach(r => runs.push(r)));
+  return runs.join('\n');
+}
+
+// RTF (descomprimido) -> texto simples.
+function rtfToText(rtf) {
+  const skipDest = /^(fonttbl|colortbl|stylesheet|pict|info|header|footer|object|themedata|datastore|latentstyles|listtable|listoverridetable|generator|fldinst)$/;
+  let out = '';
+  let skipping = false;
+  const stack = [];
+  let i = 0;
+  while (i < rtf.length) {
+    const c = rtf[i];
+    if (c === '{') {
+      stack.push(skipping);
+      i++;
+      const m = rtf.slice(i, i + 40).match(/^(\\\*)?\\([a-zA-Z]+)/);
+      if (m && (m[1] || skipDest.test(m[2]))) skipping = true;
+    } else if (c === '}') {
+      skipping = stack.length ? stack.pop() : false;
+      i++;
+    } else if (c === '\\') {
+      const n = rtf[i + 1];
+      if (n === "'") {
+        if (!skipping) out += String.fromCharCode(parseInt(rtf.substr(i + 2, 2), 16));
+        i += 4;
+      } else if (/[a-zA-Z]/.test(n)) {
+        const m = rtf.slice(i).match(/^\\([a-zA-Z]+)(-?\d+)? ?/);
+        const word = m[1];
+        if (!skipping) {
+          if (word === 'par' || word === 'line' || word === 'row') out += '\n';
+          else if (word === 'tab' || word === 'cell') out += ' ';
+          else if (word === 'u' && m[2] !== undefined) {
+            let code = parseInt(m[2], 10);
+            if (code < 0) code += 65536;
+            out += String.fromCharCode(code);
+            i += m[0].length;
+            if (rtf[i] === '?') i++; // caractere substituto
+            continue;
+          }
+        }
+        i += m[0].length;
+      } else {
+        if (!skipping && (n === '\\' || n === '{' || n === '}')) out += n;
+        else if (!skipping && n === '~') out += ' ';
+        i += 2;
+      }
+    } else {
+      if (!skipping && c !== '\r' && c !== '\n') out += c;
+      i++;
+    }
+  }
+  return out;
 }
 
 async function loadMsgReader() {
@@ -152,11 +206,21 @@ async function loadMsgReader() {
 }
 
 async function readMsg(buffer) {
+  const raw = scanBinaryStrings(buffer);
   try {
     const MsgReader = await loadMsgReader();
     const d = new MsgReader(buffer).getFileData();
+
     let html = d.bodyHtml || '';
     if (!html && d.html && d.html.length) html = new TextDecoder('utf-8').decode(d.html);
+
+    let rtfText = '';
+    if (d.compressedRtf && d.compressedRtf.length && typeof decompressRTFLib === 'function') {
+      try {
+        const bytes = decompressRTFLib(d.compressedRtf);
+        rtfText = rtfToText(Array.from(bytes, b => String.fromCharCode(b)).join(''));
+      } catch (e) { console.warn('RTF não decodificado:', e); }
+    }
 
     const recipients = (d.recipients || []).map(r => `${r.name || ''} ${r.email || r.smtpAddress || ''}`.trim());
     const meta = {
@@ -166,16 +230,18 @@ async function readMsg(buffer) {
       subject: d.subject || '',
       date: d.messageDeliveryTime || d.creationTime || d.clientSubmitTime || ''
     };
-    // Texto estruturado + varredura do binário (pega conteúdo que a biblioteca não expõe).
-    const text = [meta.from, meta.to, meta.subject, d.headers || '', d.body || '',
-      html ? htmlToText(html) : '', scanBinaryStrings(buffer)].join('\n');
-    return { meta, text, note: '' };
+
+    const readable = [meta.from, meta.to, meta.subject, d.headers || '', d.body || '',
+      html ? htmlToText(html) : '', rtfText].join('\n');
+    // A conferência usa também a varredura do binário; a tela mostra só o texto legível.
+    return { meta, text: readable, searchText: readable + '\n' + raw, note: '' };
   } catch (err) {
     console.warn('msgreader indisponível, usando leitura simplificada:', err);
     return {
       meta: { from: '', to: '', cc: '', subject: '', date: '' },
-      text: scanBinaryStrings(buffer),
-      note: 'Leitura simplificada do .msg (biblioteca indisponível). Confira a prova abaixo.'
+      text: raw,
+      searchText: raw,
+      note: 'Leitura simplificada do .msg (biblioteca indisponível). Confira o texto abaixo.'
     };
   }
 }

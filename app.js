@@ -154,8 +154,8 @@ async function handlePumi(file) {
     return;
   }
   try {
-    const { meta, text, note } = await readPumiFile(file);
-    state.pumi = { file, meta, text, note, result: checkPumi(text) };
+    const { meta, text, searchText, note } = await readPumiFile(file);
+    state.pumi = { file, meta, text, note, result: checkPumi(searchText || text) };
     renderPumi();
     updateStartButton();
   } catch (err) {
