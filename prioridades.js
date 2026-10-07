@@ -32,23 +32,86 @@ function prNormKey(s) {
 }
 
 function prExtractTicket(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return '';
-  const url = s.match(/https?:\/\/[^\s"'<>]+/i);
-  const path = (url ? url[0] : s).replace(/[?#].*$/, '');
-  const last = path.split('/').filter(Boolean).pop() || '';
-  const fromLast = last.match(/[A-Za-z][A-Za-z0-9]*-\d+/);
-  if (fromLast) return fromLast[0].toUpperCase();
-  const anywhere = s.match(/[A-Za-z][A-Za-z0-9]*-\d+/);
-  return anywhere ? anywhere[0].toUpperCase() : '';
+  const m = String(raw || '').match(/LC-\d{5}(?!\d)/i);
+  return m ? m[0].toUpperCase() : '';
+}
+
+function prTicketFromRow(cells) {
+  for (let i = 0; i < (cells || []).length; i++) {
+    const t = prExtractTicket(cells[i]);
+    if (t) return t;
+  }
+  return '';
+}
+
+function prDecodeHtml(s) {
+  return String(s || '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function prSheetFromHtml(html) {
+  const raw = String(html || '');
+  if (!/<table/i.test(raw)) return null;
+  const tables = raw.match(/<table[\s\S]*?<\/table>/gi) || [];
+  let best = null;
+  tables.forEach(table => {
+    const rows = [];
+    const trs = table.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+    trs.forEach((tr, i) => {
+      const cells = (tr.match(/<t[dh][\s\S]*?<\/t[dh]>/gi) || []).map(td => prDecodeHtml(td));
+      if (cells.some(c => c)) rows.push({ line: i + 1, cells });
+    });
+    const width = rows.reduce((m, r) => Math.max(m, r.cells.length), 0);
+    if (width >= 2 && (!best || width > best.width || (width === best.width && rows.length > best.rows.length))) {
+      best = { delim: 'html', rows, width };
+    }
+  });
+  if (!best) return null;
+  best.rows.forEach(r => { while (r.cells.length < best.width) r.cells.push(''); });
+  return best;
+}
+
+function prRowsToTsv(rows) {
+  return rows.map(r => r.cells.map(c => String(c ?? '').replace(/\t/g, ' ').replace(/\r?\n/g, ' ')).join('\t')).join('\n');
+}
+
+function prSplitLoose(line) {
+  const s = String(line || '').replace(/\u00a0/g, ' ').trim();
+  if (!s) return [''];
+  const urls = s.match(/https?:\/\/[^\s]+/gi) || [];
+  let work = s;
+  urls.forEach((u, i) => { work = work.replace(u, ` \u0001${i}\u0001 `); });
+  const parts = work.split(/[ \t]+/).map(p => p.trim()).filter(Boolean);
+  const cells = [];
+  const after = [];
+  let seenTicket = false;
+  parts.forEach(p => {
+    const um = p.match(/\u0001(\d+)\u0001/);
+    if (um) { cells.push(urls[Number(um[1])]); seenTicket = true; return; }
+    if (prExtractTicket(p)) { cells.push(prExtractTicket(p)); seenTicket = true; return; }
+    if (!seenTicket) cells.push(p);
+    else after.push(p);
+  });
+  if (after.length) cells.push(after.join(' '));
+  return cells.length ? cells : [s];
 }
 
 function prSplitCells(line, delim) {
-  const s = String(line ?? '');
+  const s = String(line ?? '').replace(/\u00a0/g, ' ');
   if (delim === 'spaces') {
-    return s.trim().split(/\s{2,}|\t+/).map(c => mpStripQuotes(c.replace(/\u00a0/g, ' ').trim()));
+    return s.trim().split(/\s{2,}|\t+/).map(c => mpStripQuotes(c.trim()));
   }
-  if (delim === '\t') return s.split('\t').map(c => mpStripQuotes(c.replace(/\u00a0/g, ' ').trim()));
+  if (delim === '\t') return s.split('\t').map(c => mpStripQuotes(c.trim()));
   const out = [];
   let cur = '', inQ = false;
   for (let i = 0; i < s.length; i++) {
@@ -92,16 +155,22 @@ function prDetectDelimiter(lines) {
 }
 
 function prSplitSheet(text) {
+  const htmlSheet = prSheetFromHtml(text);
+  if (htmlSheet && htmlSheet.width >= 2) return htmlSheet;
   const lines = String(text || '').replace(/\r/g, '').split('\n')
     .map((content, i) => ({ content, line: i + 1 }))
     .filter(l => l.content.trim() !== '');
   if (!lines.length) return null;
   const delim = prDetectDelimiter(lines);
-  const rows = lines.map(({ content, line }) => ({
+  let rows = lines.map(({ content, line }) => ({
     line,
     cells: prSplitCells(content, delim)
   }));
-  const width = rows.reduce((m, r) => Math.max(m, r.cells.length), 0);
+  let width = rows.reduce((m, r) => Math.max(m, r.cells.length), 0);
+  if (width < 2) {
+    rows = lines.map(({ content, line }) => ({ line, cells: prSplitLoose(content) }));
+    width = rows.reduce((m, r) => Math.max(m, r.cells.length), 0);
+  }
   rows.forEach(r => { while (r.cells.length < width) r.cells.push(''); });
   return { delim, rows, width };
 }
@@ -143,17 +212,16 @@ function prScoreTicketCols(dataRows, width) {
 function prParseCurrent(text) {
   const sheet = prSplitSheet(text);
   if (!sheet) return { ok: false, error: 'Cole a tabela atual.', rows: [], headers: [] };
-  const first = sheet.rows[0].cells;
-  const ticketIdx = prFindHeader(first, ['ticket']);
-  if (ticketIdx < 0) return { ok: false, error: 'Cabeçalho "Ticket" não encontrado na tabela atual.', rows: [], headers: first };
-  const subIdx = prFindHeader(first, ['sub']);
-  const commentIdx = prFindHeader(first, ['comentario', 'comment', 'comments']);
-  const linkIdx = prFindHeader(first, ['link']);
-  const data = sheet.rows.slice(1);
+  const headerIdx = prPickHeaderIdx(sheet.rows, sheet.width);
+  const first = sheet.rows[headerIdx].cells;
+  const looksHeader = !prTicketFromRow(first);
+  const data = looksHeader ? sheet.rows.slice(headerIdx + 1) : sheet.rows.slice(headerIdx);
+  const commentIdx = looksHeader ? prFindHeader(first, ['comentario', 'comment', 'comments']) : -1;
+  const subIdx = looksHeader ? prFindHeader(first, ['sub']) : -1;
   const rows = [];
   const seen = new Set();
   data.forEach(r => {
-    const ticket = prExtractTicket(r.cells[ticketIdx]) || (linkIdx >= 0 ? prExtractTicket(r.cells[linkIdx]) : '');
+    const ticket = prTicketFromRow(r.cells);
     if (!ticket) return;
     if (seen.has(ticket)) return;
     seen.add(ticket);
@@ -164,7 +232,7 @@ function prParseCurrent(text) {
       line: r.line
     });
   });
-  return { ok: true, error: '', headers: first, rows, ticketIdx, commentIdx };
+  return { ok: true, error: '', headers: first, rows, commentIdx };
 }
 
 function prParseNew(text) {
@@ -172,8 +240,7 @@ function prParseNew(text) {
   if (!sheet) return { ok: false, error: 'Cole a tabela nova.', rows: [], headers: [], width: 0, samples: [] };
   const headerIdx = prPickHeaderIdx(sheet.rows, sheet.width);
   const first = sheet.rows[headerIdx].cells;
-  const looksHeader = prFindHeader(first, ['ticket', 'link', 'comentario', 'comment', 'priority', 'assignee', 'status', 'key', 'issue', 'jira']) >= 0
-    || !prExtractTicket(first.join(' '));
+  const looksHeader = !prTicketFromRow(first);
   const headerRow = looksHeader ? first : first.map((_, i) => '');
   const data = looksHeader ? sheet.rows.slice(headerIdx + 1) : sheet.rows.slice(headerIdx);
   const headers = headerRow.map((h, i) => String(h || '').trim() || ('Coluna ' + (i + 1)));
@@ -191,6 +258,11 @@ function prParseNew(text) {
     'motivo', 'remarks', 'detalle', 'detalhe', 'details'
   ]);
   let ticketCol = namedTicket >= 0 && scored.scores[namedTicket] > 0 ? namedTicket : scored.idx;
+  let commentCol = namedComment;
+  if (commentCol < 0 && sheet.width >= 2) {
+    commentCol = sheet.width - 1;
+    if (commentCol === ticketCol) commentCol = ticketCol > 0 ? 0 : -1;
+  }
   return {
     ok: data.length > 0,
     error: data.length ? '' : 'Nenhuma linha de dados na tabela nova.',
@@ -198,7 +270,7 @@ function prParseNew(text) {
     data,
     width: sheet.width,
     ticketCol,
-    commentCol: namedComment,
+    commentCol,
     scores: scored.scores,
     samples,
     hasHeader: looksHeader
@@ -210,7 +282,7 @@ function prNewTickets(parsed, ticketCol, commentCol, noComment) {
   const dups = [];
   const rows = [];
   parsed.data.forEach(r => {
-    const ticket = prExtractTicket(r.cells[ticketCol] || '');
+    const ticket = (ticketCol >= 0 ? prExtractTicket(r.cells[ticketCol] || '') : '') || prTicketFromRow(r.cells);
     if (!ticket) return;
     if (seen.has(ticket)) { dups.push(ticket); return; }
     seen.add(ticket);
@@ -337,7 +409,7 @@ function prRefresh() {
       <div class="muted small mb-2">${neu.width} coluna(s) lida(s)${neu.width < 2 ? ' — se faltou coluna, copie de novo no Excel (Ctrl+A na planilha, não só o que aparece).' : ''}.</div>
       <div class="d-flex flex-wrap gap-3 align-items-end">
         <div>
-          <label class="form-label mb-1" for="prTicketCol">Coluna do ticket (final do link Jira)</label>
+          <label class="form-label mb-1" for="prTicketCol">Coluna do ticket (LC- + 5 dígitos)</label>
           <select id="prTicketCol" class="form-select form-select-sm" style="min-width: 280px">
             ${prSelOptions(neu.headers, prState.ticketCol, neu.scores, neu.samples)}
           </select>
@@ -360,7 +432,7 @@ function prRefresh() {
           </div>
         </div>
       </div>
-      <div class="muted small mt-2">Sub desta montagem: <strong>${escapeHtml(c.sub)}</strong> (${escapeHtml(c.name)}). Ticket = texto depois da última / do link (ex.: LC-53129). Clique na coluna de comentário se o nome não veio no cabeçalho.</div>`;
+      <div class="muted small mt-2">Sub desta montagem: <strong>${escapeHtml(c.sub)}</strong> (${escapeHtml(c.name)}). Ticket = LC- + 5 dígitos (ex.: LC-53019), em qualquer coluna. Nova primeiro; o que sobrar da atual vai abaixo.</div>`;
     document.getElementById('prTicketCol').addEventListener('change', e => {
       prState.ticketCol = Number(e.target.value);
       prState.pickedTicket = true;
@@ -405,20 +477,17 @@ function prRefresh() {
     return;
   }
   if (!hasNew) {
-    out.innerHTML = `<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>Tabela atual</strong><span>${current.rows.length} ticket(s) lido(s). Cole a tabela nova para montar.</span></div></div>`;
+    out.innerHTML = `<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>Tabela atual</strong><span>${current.rows.length} ticket(s) LC-##### lido(s). Cole a tabela nova para montar.</span></div></div>`;
     prState.built = [];
     return;
-  }
-  if (prState.ticketCol < 0) {
-    out.innerHTML = '<div class="result-banner result-fail"><i class="bi bi-x-circle-fill"></i><div><div class="result-title">SEM TICKET</div><div class="result-sub">Não achei coluna com ticket (LC-123). Escolha a coluna do link/ticket.</div></div></div>';
-    prState.built = [];
-    return;
-  }
-  if (!prState.noComment && prState.commentCol < 0 && prState.pickedComment === false) {
-    // ainda pode montar sem comentário da nova: herda da atual
   }
 
   const extracted = prNewTickets(neu, prState.ticketCol, prState.noComment ? -1 : prState.commentCol, prState.noComment);
+  if (!extracted.rows.length) {
+    out.innerHTML = '<div class="result-banner result-fail"><i class="bi bi-x-circle-fill"></i><div><div class="result-title">SEM TICKET</div><div class="result-sub">Não achei LC- + 5 dígitos (ex.: LC-53019) na tabela nova.</div></div></div>';
+    prState.built = [];
+    return;
+  }
   const merged = prMerge(current.ok ? current.rows : [], extracted.rows, c.sub);
   const built = prBuildSheet(merged.rows, prState.startRow);
   prState.built = built;
@@ -430,7 +499,7 @@ function prRefresh() {
       <i class="bi bi-check-circle-fill"></i>
       <div>
         <div class="result-title">PLANILHA MONTADA</div>
-        <div class="result-sub">${built.length} linha(s) · Priority 1…${built.length} · fórmulas a partir da linha ${prState.startRow}. Copie e cole no SharePoint/Excel.</div>
+        <div class="result-sub">${built.length} linha(s) · nova ${extracted.rows.length} · atual ${current.ok ? current.rows.length : 0} (sobra ${st.fromOld}) · Priority 1…${built.length} · fórmulas a partir da linha ${prState.startRow}.</div>
       </div>
     </div>
     <div class="stats">
@@ -440,6 +509,7 @@ function prRefresh() {
       <div class="stat"><span>Comentário da nova</span><strong>${st.commentNew}</strong></div>
       <div class="stat"><span>Comentário herdado</span><strong>${st.commentOld}</strong></div>
     </div>
+    ${hasCurrent && current.ok && !current.rows.length ? '<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>Tabela atual</strong><span>nenhum LC- + 5 dígitos. Só a nova entrou.</span></div></div>' : ''}
     ${extracted.dups.length ? `<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>Duplicados na nova</strong><span>mantive a primeira ocorrência: ${escapeHtml([...new Set(extracted.dups)].join(', '))}</span></div></div>` : ''}
     <div class="table-wrap"><table class="table table-sm table-dark mb-0">
       <thead><tr>${PR_OUT_COLUMNS.map(h => `<th>${escapeHtml(h)}</th>`).join('')}<th>Origem</th></tr></thead>
@@ -530,6 +600,24 @@ function prDownloadXlsx() {
   XLSX.writeFile(wb, 'prioridades.xlsx');
 }
 
+function prPasteInto(e) {
+  const html = e.clipboardData ? e.clipboardData.getData('text/html') : '';
+  const plain = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+  const fromHtml = prSheetFromHtml(html);
+  const fromPlain = prSplitSheet(plain || '');
+  const htmlW = fromHtml ? fromHtml.width : 0;
+  const plainW = fromPlain ? fromPlain.width : 0;
+  if (fromHtml && htmlW >= 2 && htmlW > plainW) {
+    e.preventDefault();
+    e.target.value = prRowsToTsv(fromHtml.rows);
+    if (e.target.id === 'prNewText') {
+      prState.pickedTicket = false;
+      prState.pickedComment = false;
+    }
+    prRefresh();
+  }
+}
+
 function prClear() {
   document.getElementById('prCurrentText').value = '';
   document.getElementById('prNewText').value = '';
@@ -555,6 +643,8 @@ if (typeof document !== 'undefined') {
     document.getElementById('prCurrentText').addEventListener('input', () => {
       clearTimeout(t1); t1 = setTimeout(prRefresh, 250);
     });
+    document.getElementById('prNewText').addEventListener('paste', prPasteInto);
+    document.getElementById('prCurrentText').addEventListener('paste', prPasteInto);
     document.getElementById('prNewText').addEventListener('input', () => {
       prState.pickedTicket = false;
       prState.pickedComment = false;
@@ -573,6 +663,6 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    prExtractTicket, prParseCurrent, prParseNew, prNewTickets, prMerge, prBuildSheet, prToTsv, prFormulaStatus, prFormulaLink, prDetectDelimiter, prSplitSheet
+    prExtractTicket, prTicketFromRow, prParseCurrent, prParseNew, prNewTickets, prMerge, prBuildSheet, prToTsv, prFormulaStatus, prFormulaLink, prDetectDelimiter, prSplitSheet, prSheetFromHtml, prSplitLoose
   };
 }

@@ -258,7 +258,7 @@
             <i class="bi bi-table text-accent fs-4"></i>
             <h4 class="m-0">Tabela atual</h4>
           </div>
-          <p class="muted mb-3">Cole a lista que já está no SharePoint, com cabeçalho. Colunas: Sub, Ticket, Status, Assignee, Priority, Link, Comentário, Campaigns.</p>
+          <p class="muted mb-3">Cole a lista que já está no SharePoint. O ticket é <strong>LC-</strong> + 5 dígitos (ex.: LC-53019), com ou sem cabeçalho. Comentário da atual entra se a coluna existir.</p>
           <textarea id="prCurrentText" class="form-control pumi-textarea" rows="7"
             placeholder="Cole aqui a tabela atual..." spellcheck="false"></textarea>
         </div>
@@ -268,7 +268,7 @@
             <i class="bi bi-plus-square text-accent fs-4"></i>
             <h4 class="m-0">Tabela nova (país)</h4>
           </div>
-          <p class="muted mb-3">Cole o que o país mandou. O ticket sai do final do link Jira (depois da última /). Se houver comentário, escolha a coluna depois da leitura. Marque “Não tem comentário” se a nova não trouxer essa coluna.</p>
+          <p class="muted mb-3">Cole o que o país mandou. Ticket = LC- + 5 dígitos em qualquer coluna (cabeçalho opcional). Itens em comum ficam na ordem da nova; o que sobrar da atual vai abaixo. Se houver comentário, escolha a coluna.</p>
           <textarea id="prNewText" class="form-control pumi-textarea" rows="7"
             placeholder="Cole aqui a tabela nova..." spellcheck="false"></textarea>
           <div id="prNewCols" class="mt-3"></div>
@@ -299,6 +299,6 @@
   <script src="specialprice.js?v=2"></script>
   <script src="app.js?v=2"></script>
   <script src="voucher.js?v=2"></script>
-  <script src="prioridades.js?v=3"></script>
+  <script src="prioridades.js?v=5"></script>
 </body>
 </html>
