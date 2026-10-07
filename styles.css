@@ -395,6 +395,12 @@ h1 {
   height: 1px;
   overflow: hidden;
 }
+.pr-map-table th { cursor: pointer; white-space: nowrap; }
+.pr-map-table th:hover { background: rgba(107, 134, 255, .25); }
+.pr-map-table th.active { background: var(--samsung-blue); color: #fff; }
+.pr-map-table td.pr-col-on { background: rgba(20, 40, 160, .28); }
+.pr-map-table td { white-space: normal; max-width: 240px; }
+
 .table-wrap td.pr-formula {
   max-width: 220px;
   font-size: .75rem;

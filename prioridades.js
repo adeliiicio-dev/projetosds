@@ -11,6 +11,8 @@ const PR_OUT_COLUMNS = ['Sub', 'Ticket', 'Status', 'Assignee', 'Priority', 'Link
 const PR_JIRA_LOOKUP = "'https://samsung.sharepoint.com/sites/COESDSLA/Shared Documents/GBA Documents & Files/Dashboards 2026/Dashboard CoE - TLC - TNE/[updateJira.xlsx]updateJira'!$A:$E";
 const PR_JIRA_BROWSE = 'https://jira.secext.samsung.net/browse/';
 const PR_TABLE_ROWS = 200;
+const PR_CURRENT_COMMENT_COL = 6; // 7ª coluna do colado (1-indexed)
+const PR_MAP_ROWS = 40;
 
 const prState = {
   country: 'CO',
@@ -212,12 +214,16 @@ function prScoreTicketCols(dataRows, width) {
 function prParseCurrent(text) {
   const sheet = prSplitSheet(text);
   if (!sheet) return { ok: false, error: 'Cole a tabela atual.', rows: [], headers: [] };
+  const need = PR_CURRENT_COMMENT_COL + 1;
+  if (sheet.width < need) {
+    sheet.rows.forEach(r => { while (r.cells.length < need) r.cells.push(''); });
+    sheet.width = need;
+  }
   const headerIdx = prPickHeaderIdx(sheet.rows, sheet.width);
   const first = sheet.rows[headerIdx].cells;
   const looksHeader = !prTicketFromRow(first);
   const data = looksHeader ? sheet.rows.slice(headerIdx + 1) : sheet.rows.slice(headerIdx);
-  const commentIdx = looksHeader ? prFindHeader(first, ['comentario', 'comment', 'comments']) : -1;
-  const subIdx = looksHeader ? prFindHeader(first, ['sub']) : -1;
+  const subIdx = looksHeader ? prFindHeader(first, ['sub']) : 0;
   const rows = [];
   const seen = new Set();
   data.forEach(r => {
@@ -225,14 +231,15 @@ function prParseCurrent(text) {
     if (!ticket) return;
     if (seen.has(ticket)) return;
     seen.add(ticket);
+    const subRaw = subIdx >= 0 ? String(r.cells[subIdx] || '').trim() : '';
     rows.push({
       ticket,
-      sub: subIdx >= 0 ? String(r.cells[subIdx] || '').trim() : '',
-      comment: commentIdx >= 0 ? String(r.cells[commentIdx] || '').trim() : '',
+      sub: prExtractTicket(subRaw) ? '' : subRaw,
+      comment: String(r.cells[PR_CURRENT_COMMENT_COL] || '').trim(),
       line: r.line
     });
   });
-  return { ok: true, error: '', headers: first, rows, commentIdx };
+  return { ok: true, error: '', headers: first, rows, commentIdx: PR_CURRENT_COMMENT_COL };
 }
 
 function prParseNew(text) {
@@ -258,11 +265,6 @@ function prParseNew(text) {
     'motivo', 'remarks', 'detalle', 'detalhe', 'details'
   ]);
   let ticketCol = namedTicket >= 0 && scored.scores[namedTicket] > 0 ? namedTicket : scored.idx;
-  let commentCol = namedComment;
-  if (commentCol < 0 && sheet.width >= 2) {
-    commentCol = sheet.width - 1;
-    if (commentCol === ticketCol) commentCol = ticketCol > 0 ? 0 : -1;
-  }
   return {
     ok: data.length > 0,
     error: data.length ? '' : 'Nenhuma linha de dados na tabela nova.',
@@ -270,7 +272,7 @@ function prParseNew(text) {
     data,
     width: sheet.width,
     ticketCol,
-    commentCol,
+    commentCol: namedComment,
     scores: scored.scores,
     samples,
     hasHeader: looksHeader
@@ -397,65 +399,36 @@ function prRefresh() {
     if (!prState.pickedTicket || prState.ticketCol < 0 || prState.ticketCol >= neu.width) {
       prState.ticketCol = neu.ticketCol;
     }
-    if (!prState.pickedComment && neu.commentCol >= 0) prState.commentCol = neu.commentCol;
-    if (prState.commentCol >= neu.width) prState.commentCol = -1;
+    if (prState.commentCol >= neu.width) {
+      prState.commentCol = -1;
+      prState.pickedComment = false;
+    }
   }
 
   const colBox = document.getElementById('prNewCols');
   if (!neu.ok) {
     colBox.innerHTML = neu.error ? `<div class="muted">${escapeHtml(neu.error)}</div>` : '';
   } else {
+    const shownMap = neu.data.slice(0, PR_MAP_ROWS);
+    const sel = prState.noComment ? -1 : prState.commentCol;
     colBox.innerHTML = `
-      <div class="muted small mb-2">${neu.width} coluna(s) lida(s)${neu.width < 2 ? ' — se faltou coluna, copie de novo no Excel (Ctrl+A na planilha, não só o que aparece).' : ''}.</div>
-      <div class="d-flex flex-wrap gap-3 align-items-end">
-        <div>
-          <label class="form-label mb-1" for="prTicketCol">Coluna do ticket (LC- + 5 dígitos)</label>
-          <select id="prTicketCol" class="form-select form-select-sm" style="min-width: 280px">
-            ${prSelOptions(neu.headers, prState.ticketCol, neu.scores, neu.samples)}
-          </select>
-        </div>
-        <div class="form-check mt-4">
-          <input class="form-check-input" type="checkbox" id="prNoComment" ${prState.noComment ? 'checked' : ''}>
-          <label class="form-check-label" for="prNoComment">Não tem comentário</label>
-        </div>
-        <div id="prCommentWrap" style="${prState.noComment ? 'display:none' : ''}">
-          <label class="form-label mb-1" for="prCommentCol">Coluna de comentário</label>
-          <select id="prCommentCol" class="form-select form-select-sm" style="min-width: 280px">
-            <option value="-1" ${prState.commentCol < 0 ? 'selected' : ''}>— escolher —</option>
-            ${prSelOptions(neu.headers, prState.commentCol, null, neu.samples)}
-          </select>
-          <div class="catalog-list mt-2" id="prCommentChips">
-            ${neu.headers.map((h, i) => `
-              <button type="button" class="catalog-pill ${i === prState.commentCol ? 'active' : ''}" data-pr-comment="${i}">
-                ${escapeHtml(h)}<small>${escapeHtml(neu.samples[i] || 'col. ' + (i + 1))}</small>
-              </button>`).join('')}
-          </div>
-        </div>
+      <div class="muted small mb-2">${neu.width} coluna(s) · ${neu.data.length} linha(s). Clique no <strong>cabeçalho da coluna de comentário</strong>.</div>
+      <div class="form-check mb-2">
+        <input class="form-check-input" type="checkbox" id="prNoComment" ${prState.noComment ? 'checked' : ''}>
+        <label class="form-check-label" for="prNoComment">Não tem comentário</label>
       </div>
-      <div class="muted small mt-2">Sub desta montagem: <strong>${escapeHtml(c.sub)}</strong> (${escapeHtml(c.name)}). Ticket = LC- + 5 dígitos (ex.: LC-53019), em qualquer coluna. Nova primeiro; o que sobrar da atual vai abaixo.</div>`;
-    document.getElementById('prTicketCol').addEventListener('change', e => {
-      prState.ticketCol = Number(e.target.value);
-      prState.pickedTicket = true;
-      prRefresh();
-    });
-    document.getElementById('prNoComment').addEventListener('change', e => {
-      prState.noComment = e.target.checked;
-      prRefresh();
-    });
-    const cc = document.getElementById('prCommentCol');
-    if (cc) cc.addEventListener('change', e => {
-      prState.commentCol = Number(e.target.value);
-      prState.pickedComment = true;
-      prRefresh();
-    });
-    const chips = document.getElementById('prCommentChips');
-    if (chips) chips.addEventListener('click', e => {
-      const b = e.target.closest('[data-pr-comment]');
-      if (!b) return;
-      prState.commentCol = Number(b.dataset.prComment);
-      prState.pickedComment = true;
-      prRefresh();
-    });
+      <div class="table-wrap" ${prState.noComment ? 'style="display:none"' : ''}>
+        <table class="table table-sm table-dark table-bordered mb-0 pr-map-table">
+          <thead><tr>${neu.headers.map((h, i) => `
+            <th class="${i === sel ? 'active' : ''}" data-pr-comment="${i}" role="button" tabindex="0">
+              Coluna ${i + 1}${h && h !== ('Coluna ' + (i + 1)) ? ' · ' + escapeHtml(h) : ''}
+            </th>`).join('')}</tr></thead>
+          <tbody>${shownMap.map(r => `<tr>${r.cells.map((cell, i) => `
+            <td class="${i === sel ? 'pr-col-on' : ''}" data-pr-comment="${i}">${escapeHtml(String(cell || ''))}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table>
+      </div>
+      ${neu.data.length > PR_MAP_ROWS ? `<div class="muted small mt-2">Prévia: ${PR_MAP_ROWS} de ${neu.data.length} linhas.</div>` : ''}
+      <div class="muted small mt-2">${sel >= 0 ? 'Comentário: coluna ' + (sel + 1) + '.' : 'Ainda não escolheu a coluna de comentário.'} Sub: <strong>${escapeHtml(c.sub)}</strong>.</div>`;
   }
 
   const out = document.getElementById('prResult');
@@ -478,6 +451,12 @@ function prRefresh() {
   }
   if (!hasNew) {
     out.innerHTML = `<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>Tabela atual</strong><span>${current.rows.length} ticket(s) LC-##### lido(s). Cole a tabela nova para montar.</span></div></div>`;
+    prState.built = [];
+    return;
+  }
+
+  if (!prState.noComment && !prState.pickedComment) {
+    out.innerHTML = '<div class="result-banner result-wait"><i class="bi bi-hourglass-split"></i><div><div class="result-title">TABELA NOVA MAPEADA</div><div class="result-sub">Clique no cabeçalho da coluna de comentário na tabela acima. Depois o sistema junta com a atual.</div></div></div>';
     prState.built = [];
     return;
   }
@@ -645,6 +624,19 @@ if (typeof document !== 'undefined') {
     });
     document.getElementById('prNewText').addEventListener('paste', prPasteInto);
     document.getElementById('prCurrentText').addEventListener('paste', prPasteInto);
+    document.getElementById('prNewCols').addEventListener('click', e => {
+      const b = e.target.closest('[data-pr-comment]');
+      if (!b || prState.noComment) return;
+      prState.commentCol = Number(b.dataset.prComment);
+      prState.pickedComment = true;
+      prRefresh();
+    });
+    document.getElementById('prNewCols').addEventListener('change', e => {
+      if (e.target.id !== 'prNoComment') return;
+      prState.noComment = e.target.checked;
+      prState.pickedComment = prState.noComment || prState.commentCol >= 0;
+      prRefresh();
+    });
     document.getElementById('prNewText').addEventListener('input', () => {
       prState.pickedTicket = false;
       prState.pickedComment = false;
