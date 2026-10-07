@@ -16,7 +16,6 @@ const PR_MAP_ROWS = 40;
 
 const prState = {
   country: 'CO',
-  startRow: 2,
   ticketCol: -1,
   commentCol: -1,
   noComment: false,
@@ -343,10 +342,9 @@ function prFormulaLink(row) {
 }
 function prFormulaCampaigns(row) { return `=VLOOKUP(B${row},${PR_JIRA_LOOKUP},5,0)`; }
 
-function prBuildSheet(merged, startRow) {
-  const start = Math.max(1, Number(startRow) || 2);
+function prBuildSheet(merged) {
   return merged.map((r, i) => {
-    const excelRow = start + i;
+    const excelRow = i + 1;
     return {
       excelRow,
       Sub: r.sub,
@@ -468,7 +466,7 @@ function prRefresh() {
     return;
   }
   const merged = prMerge(current.ok ? current.rows : [], extracted.rows, c.sub);
-  const built = prBuildSheet(merged.rows, prState.startRow);
+  const built = prBuildSheet(merged.rows);
   prState.built = built;
 
   const st = merged.stats;
@@ -478,7 +476,7 @@ function prRefresh() {
       <i class="bi bi-check-circle-fill"></i>
       <div>
         <div class="result-title">PLANILHA MONTADA</div>
-        <div class="result-sub">${built.length} linha(s) · nova ${extracted.rows.length} · atual ${current.ok ? current.rows.length : 0} (sobra ${st.fromOld}) · Priority 1…${built.length} · fórmulas a partir da linha ${prState.startRow}.</div>
+        <div class="result-sub">${built.length} linha(s) · nova ${extracted.rows.length} · atual ${current.ok ? current.rows.length : 0} (sobra ${st.fromOld}) · Priority 1…${built.length} · fórmulas a partir da linha 1 (B1).</div>
       </div>
     </div>
     <div class="stats">
@@ -504,7 +502,7 @@ function prRefresh() {
         <td class="muted">${escapeHtml(r.source)}${r.commentFrom ? ' · com. ' + r.commentFrom : ''}</td>
       </tr>`).join('')}</tbody></table></div>
       ${built.length > PR_TABLE_ROWS ? `<div class="muted small mt-2">Prévia: ${PR_TABLE_ROWS} de ${built.length} linhas. O copiar leva todas.</div>` : ''}
-      <div class="muted small mt-2">Use <strong>Copiar linhas</strong> ou <strong>Baixar Excel</strong>. Colar o texto puro faz o Excel pôr <code>'</code> na frente da fórmula e ela não calcula.</div>`;
+      <div class="muted small mt-2">Use <strong>Copiar linhas</strong> (só o conteúdo, sem cor) ou <strong>Baixar Excel</strong>.</div>`;
 }
 
 function prFormulaCells(built) {
@@ -527,18 +525,11 @@ function prApplyFormulas(ws, built) {
   });
 }
 
-function prFillTable(built) {
-  const table = document.createElement('table');
-  built.forEach(r => {
-    const tr = document.createElement('tr');
-    PR_OUT_COLUMNS.forEach(c => {
-      const td = document.createElement('td');
-      td.textContent = String(r[c] ?? '');
-      tr.appendChild(td);
-    });
-    table.appendChild(tr);
-  });
-  return table;
+function prCopyHtml(built) {
+  const rows = built.map(r =>
+    '<tr>' + PR_OUT_COLUMNS.map(c => `<td>${escapeHtml(String(r[c] ?? ''))}</td>`).join('') + '</tr>'
+  ).join('');
+  return `<html><body><table>${rows}</table></body></html>`;
 }
 
 function prCopied(btn) {
@@ -547,25 +538,35 @@ function prCopied(btn) {
   setTimeout(() => { btn.innerHTML = html; }, 1500);
 }
 
+function prCopyPlain(tsv, btn) {
+  const ta = document.createElement('textarea');
+  ta.value = tsv;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  document.body.removeChild(ta);
+  if (ok) { prCopied(btn); return; }
+  alert('Não deu para copiar. Use Baixar Excel.');
+}
+
 function prCopy() {
   const built = prState.built;
   if (!built || !built.length) { alert('Nada para copiar. Cole as tabelas primeiro.'); return; }
   const btn = document.getElementById('prCopy');
-  const host = document.getElementById('prClip');
-  host.innerHTML = '';
-  host.appendChild(prFillTable(built));
-  const table = host.querySelector('table');
-  const sel = window.getSelection();
-  const range = document.createRange();
-  range.selectNode(table);
-  sel.removeAllRanges();
-  sel.addRange(range);
-  let ok = false;
-  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-  sel.removeAllRanges();
-  host.innerHTML = '';
-  if (ok) { prCopied(btn); return; }
-  alert('Não deu para copiar como tabela. Use Baixar Excel.');
+  const tsv = prToTsv(built, false);
+  const html = prCopyHtml(built);
+  if (navigator.clipboard && window.ClipboardItem) {
+    const item = new ClipboardItem({
+      'text/plain': new Blob([tsv], { type: 'text/plain' }),
+      'text/html': new Blob([html], { type: 'text/html' })
+    });
+    navigator.clipboard.write([item]).then(() => prCopied(btn)).catch(() => prCopyPlain(tsv, btn));
+    return;
+  }
+  prCopyPlain(tsv, btn);
 }
 
 function prDownloadXlsx() {
@@ -641,10 +642,6 @@ if (typeof document !== 'undefined') {
       prState.pickedTicket = false;
       prState.pickedComment = false;
       clearTimeout(t2); t2 = setTimeout(prRefresh, 250);
-    });
-    document.getElementById('prStartRow').addEventListener('change', e => {
-      prState.startRow = Math.max(1, parseInt(e.target.value, 10) || 2);
-      prRefresh();
     });
     document.getElementById('prCopy').addEventListener('click', prCopy);
     document.getElementById('prXlsx').addEventListener('click', prDownloadXlsx);
