@@ -19,8 +19,98 @@ function vcBlank(s) {
   return !vcCleanCell(s);
 }
 
+function vcHasContent(s) {
+  const t = vcCleanCell(s);
+  if (!t) return false;
+  return !/^(?:[-–—._*]|n\/?a|null|#n\/?a|#ref!|#value!|#null!|#div\/0!)$/i.test(t);
+}
+
+function vcExcelGhostDate(s) {
+  const t = vcCleanCell(s);
+  if (!t) return true;
+  if (/^0+(\.0+)?$/.test(t)) return true;
+  if (/^0+[\/.\-]0+[\/.\-]0+$/.test(t)) return true;
+  if (/^(0?1[\/.\-]0[\/.\-]1900|0[\/.\-]0?1[\/.\-]1900|0?30[\/.\-]0?12[\/.\-]1899|0?31[\/.\-]0?12[\/.\-]1899)/.test(t)) return true;
+  const p = spParseDate(t);
+  return !!(p.ts !== undefined && p.ts < Date.UTC(1901, 0, 1));
+}
+
+function vcHasDateContent(s) {
+  return vcHasContent(s) && !vcExcelGhostDate(s);
+}
+
 function vcRowAllEmpty(cells) {
   return !cells.length || cells.every(vcBlank);
+}
+
+function vcRowComplete(cells, typeIdx, valueIdx, startIdx, endIdx) {
+  const pick = i => (i >= 0 ? cells[i] : '');
+  return vcHasContent(pick(typeIdx)) && vcHasContent(pick(valueIdx)) && vcHasDateContent(pick(startIdx)) && vcHasDateContent(pick(endIdx));
+}
+
+function vcDecodeHtml(s) {
+  return String(s || '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/p>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+}
+
+function vcSheetFromHtml(html) {
+  const raw = String(html || '');
+  if (!/<table/i.test(raw)) return null;
+  const tables = raw.match(/<table[\s\S]*?<\/table>/gi) || [];
+  let best = null;
+  tables.forEach(table => {
+    const occupy = [];
+    const grid = [];
+    const trs = table.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+    trs.forEach((tr, ri) => {
+      if (!grid[ri]) grid[ri] = [];
+      if (!occupy[ri]) occupy[ri] = [];
+      let c = 0;
+      (tr.match(/<t[dh][\s\S]*?<\/t[dh]>/gi) || []).forEach(td => {
+        while (occupy[ri][c]) c++;
+        const rs = Math.max(1, Number((td.match(/rowspan\s*=\s*["']?(\d+)/i) || [])[1] || 1));
+        const cs = Math.max(1, Number((td.match(/colspan\s*=\s*["']?(\d+)/i) || [])[1] || 1));
+        const text = vcCleanCell(vcDecodeHtml(td));
+        for (let i = 0; i < rs; i++) {
+          if (!grid[ri + i]) grid[ri + i] = [];
+          if (!occupy[ri + i]) occupy[ri + i] = [];
+          for (let j = 0; j < cs; j++) {
+            occupy[ri + i][c + j] = true;
+            if (grid[ri + i][c + j] == null) grid[ri + i][c + j] = (i === 0 && j === 0) ? text : '';
+          }
+        }
+        c += cs;
+      });
+    });
+    const width = grid.reduce((m, r) => Math.max(m, (r || []).length), 0);
+    const rows = grid.map((cells, i) => {
+      const out = [];
+      for (let k = 0; k < width; k++) out.push(vcCleanCell(cells[k] || ''));
+      return { line: i + 1, cells: out };
+    });
+    if (width >= 2 && (!best || width > best.width || (width === best.width && rows.length > best.rows.length))) {
+      best = { delim: 'html', rows, width };
+    }
+  });
+  return best;
+}
+
+function vcRowsToTsv(rows) {
+  return rows.map(r => r.cells.map(c => String(c ?? '').replace(/\t/g, ' ').replace(/\r?\n/g, ' ')).join('\t')).join('\n');
+}
+
+function vcNormalizeText(text) {
+  const sheet = vcSheetFromHtml(text);
+  if (sheet && sheet.width >= 2) return vcRowsToTsv(sheet.rows);
+  return String(text || '');
 }
 
 function vcFindHeader(norm, aliases) {
@@ -35,7 +125,7 @@ function vcFindHeader(norm, aliases) {
 }
 
 function vcParseTemplate(text) {
-  const lines = String(text || '').replace(/\r/g, '').split('\n').map((content, i) => ({ content, line: i + 1 }));
+  const lines = vcNormalizeText(text).replace(/\r/g, '').split('\n').map((content, i) => ({ content, line: i + 1 }));
   let headerIdx = -1, delim = '\t';
   for (let i = 0; i < Math.min(lines.length, 15); i++) {
     const d = mpDetectDelimiter(lines[i].content);
@@ -69,10 +159,14 @@ function vcParseTemplate(text) {
   if (endIdx < 0) missing.push('End Date and Time');
 
   const rows = [];
+  let skipped = 0;
   lines.slice(headerIdx + 1).forEach(({ content, line }) => {
-    if (!content.trim()) return;
+    if (!content.trim()) { skipped++; return; }
     const cells = content.split(delim).map(c => vcCleanCell(mpStripQuotes(c)));
-    if (vcRowAllEmpty(cells)) return;
+    if (vcRowAllEmpty(cells) || !vcRowComplete(cells, typeIdx, valueIdx, startIdx, endIdx)) {
+      skipped++;
+      return;
+    }
     rows.push({ line, cells });
   });
 
@@ -81,7 +175,8 @@ function vcParseTemplate(text) {
     missing,
     headers: rawHeaders,
     columns: { type: typeIdx, value: valueIdx, start: startIdx, end: endIdx, message: msgIdx },
-    rows
+    rows,
+    skipped
   };
 }
 
@@ -104,15 +199,16 @@ function vcEvaluate(parsed) {
     const type = vcCleanCell(get(cells, 'type'));
     const value = vcCleanCell(get(cells, 'value'));
     const message = vcCleanCell(get(cells, 'message'));
-    const from = spParseDate(get(cells, 'start'));
-    const to = spParseDate(get(cells, 'end'));
+    const startRaw = get(cells, 'start');
+    const endRaw = get(cells, 'end');
+    const from = spParseDate(startRaw);
+    const to = spParseDate(endRaw);
+    if (!vcRowComplete(cells, parsed.columns.type, parsed.columns.value, parsed.columns.start, parsed.columns.end)) return null;
     const kind = vcKind(type);
     const num = mpParsePrice(value);
     const issues = [];
 
-    if (!type) issues.push({ type: 'discount', msg: 'Type of discount vazio' });
-    if (!value) issues.push({ type: 'discount', msg: 'Discounts/Price Value vazio' });
-    else if (kind === 'percentage') {
+    if (kind === 'percentage') {
       if (num === null || !vcHasPercent(value)) {
         issues.push({ type: 'discount', msg: `Type é percentage, o valor ao lado precisa ser um número com % ("${value}")` });
       }
@@ -120,10 +216,8 @@ function vcEvaluate(parsed) {
       issues.push({ type: 'discount', msg: `Type é "${type || 'fixed'}", o valor ao lado precisa ser um número fixo, sem % ("${value}")` });
     }
 
-    if (from.empty) issues.push({ type: 'date', msg: 'Start Date and Time vazio' });
-    if (to.empty) issues.push({ type: 'date', msg: 'End Date and Time vazio' });
-    if (from.invalid) issues.push({ type: 'date', msg: `Start Date and Time inválida ("${from.display}")` });
-    if (to.invalid) issues.push({ type: 'date', msg: `End Date and Time inválida ("${to.display}")` });
+    if (from.empty || from.invalid) issues.push({ type: 'date', msg: `Start Date and Time inválida ("${from.display || startRaw}")` });
+    if (to.empty || to.invalid) issues.push({ type: 'date', msg: `End Date and Time inválida ("${to.display || endRaw}")` });
     if (from.ts !== undefined && to.ts !== undefined && from.ts > to.ts) {
       issues.push({ type: 'date', msg: `Start (${from.display}) maior que End (${to.display})` });
     }
@@ -133,7 +227,7 @@ function vcEvaluate(parsed) {
       from: from.display || String(get(cells, 'start') || ''),
       to: to.display || String(get(cells, 'end') || '')
     };
-  });
+  }).filter(Boolean);
 }
 
 function vcCheckItem(status, title, summary, evidence) {
@@ -248,8 +342,8 @@ function vcRunTemplate() {
       <div>
         <div class="result-title">${ok ? 'SUCESSO' : 'FALHA'}</div>
         <div class="result-sub">${ok
-          ? `${results.length} linha(s) conferida(s): percentage com %, demais valores fixos, datas OK.`
-          : (!results.length ? 'Nenhuma linha de dados depois do cabeçalho.'
+          ? `${results.length} linha(s) completa(s) conferida(s): percentage com %, demais valores fixos, datas OK.${parsed.skipped ? ` ${parsed.skipped} linha(s) vazia(s)/incompleta(s) ignorada(s).` : ''}`
+          : (!results.length ? (parsed.skipped ? `Nenhuma linha completa. ${parsed.skipped} linha(s) vazia(s)/incompleta(s) ignorada(s).` : 'Nenhuma linha de dados depois do cabeçalho.')
             : `${discFails.length} erro(s) de desconto, ${dateFails.length} erro(s) de data.`)}</div>
       </div>
     </div>
@@ -312,11 +406,23 @@ if (typeof document !== 'undefined') {
       clearTimeout(tplTimer);
       tplTimer = setTimeout(vcHandleTemplate, 250);
     });
+    document.getElementById('vcTemplateText').addEventListener('paste', e => {
+      const html = e.clipboardData ? e.clipboardData.getData('text/html') : '';
+      const plain = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+      const fromHtml = vcSheetFromHtml(html);
+      const htmlW = fromHtml ? fromHtml.width : 0;
+      const plainW = String(plain || '').split('\n').reduce((m, l) => Math.max(m, l.split('\t').length), 0);
+      if (fromHtml && htmlW >= 2 && htmlW >= plainW) {
+        e.preventDefault();
+        e.target.value = vcRowsToTsv(fromHtml.rows);
+        vcHandleTemplate();
+      }
+    });
     document.getElementById('btnVcLimpar').addEventListener('click', vcClear);
     vcRenderOverall();
   });
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { vcParseTemplate, vcEvaluate, vcKind, vcRowAllEmpty, vcBlank };
+  module.exports = { vcParseTemplate, vcEvaluate, vcKind, vcRowAllEmpty, vcBlank, vcRowComplete, vcSheetFromHtml };
 }
