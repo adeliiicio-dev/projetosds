@@ -6,6 +6,7 @@ function showScreen(name, menuItem) {
   if (name === 'special-price' && typeof spRefresh === 'function') spRefresh();
   if (name === 'voucher' && typeof vcRefresh === 'function') vcRefresh();
   if (name === 'prioridades' && typeof prRefresh === 'function') prRefresh();
+  if (name === 'knox' && typeof knoxRefresh === 'function') knoxRefresh();
 
   const active = menuItem || name;
   document.querySelectorAll('.side-button').forEach(b => {
