@@ -8,6 +8,21 @@ const vcState = {
   templateOk: null
 };
 
+function vcCleanCell(s) {
+  return String(s ?? '')
+    .replace(/[\u00a0\u2007\u202f]/g, ' ')
+    .replace(/[\u200B-\u200F\uFEFF]/g, '')
+    .trim();
+}
+
+function vcBlank(s) {
+  return !vcCleanCell(s);
+}
+
+function vcRowAllEmpty(cells) {
+  return !cells.length || cells.every(vcBlank);
+}
+
 function vcFindHeader(norm, aliases) {
   const keys = aliases.map(mpNormKey);
   for (let i = 0; i < norm.length; i++) {
@@ -56,8 +71,8 @@ function vcParseTemplate(text) {
   const rows = [];
   lines.slice(headerIdx + 1).forEach(({ content, line }) => {
     if (!content.trim()) return;
-    const cells = content.split(delim).map(c => mpStripQuotes(c));
-    if (!cells.some(c => c !== '')) return;
+    const cells = content.split(delim).map(c => vcCleanCell(mpStripQuotes(c)));
+    if (vcRowAllEmpty(cells)) return;
     rows.push({ line, cells });
   });
 
@@ -86,9 +101,9 @@ function vcEvaluate(parsed) {
     return i >= 0 ? (cells[i] ?? '') : '';
   };
   return parsed.rows.map(({ line, cells }) => {
-    const type = String(get(cells, 'type')).trim();
-    const value = String(get(cells, 'value')).trim();
-    const message = String(get(cells, 'message')).trim();
+    const type = vcCleanCell(get(cells, 'type'));
+    const value = vcCleanCell(get(cells, 'value'));
+    const message = vcCleanCell(get(cells, 'message'));
     const from = spParseDate(get(cells, 'start'));
     const to = spParseDate(get(cells, 'end'));
     const kind = vcKind(type);
@@ -303,5 +318,5 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { vcParseTemplate, vcEvaluate, vcKind };
+  module.exports = { vcParseTemplate, vcEvaluate, vcKind, vcRowAllEmpty, vcBlank };
 }
