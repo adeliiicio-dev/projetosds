@@ -112,43 +112,47 @@ function spFmtTs(ts) {
   return d.getUTCHours() || d.getUTCMinutes() ? `${date} ${spPad(d.getUTCHours())}:${spPad(d.getUTCMinutes())}` : date;
 }
 
+function spDateParts(y, mo, d, h, mi, se) {
+  y = Number(y); mo = Number(mo); d = Number(d);
+  h = Number(h || 0); mi = Number(mi || 0); se = Number(se || 0);
+  const date = new Date(Date.UTC(y, mo - 1, d, h, mi, se));
+  if (date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d) return null;
+  const ts = Math.round(date.getTime() / 60000) * 60000;
+  return { ts, display: spFmtTs(ts) };
+}
+
 // Retorna { empty } | { invalid, display } | { ts, display }. ts em "horário de parede" (UTC), em minutos.
 function spParseDate(v) {
   if (v === '' || v === null || v === undefined) return { empty: true };
-  const round = ms => Math.round(ms / 60000) * 60000;
 
   if (v instanceof Date) {
     if (isNaN(v)) return { invalid: true, display: String(v) };
-    const ts = round(Date.UTC(v.getFullYear(), v.getMonth(), v.getDate(), v.getHours(), v.getMinutes(), v.getSeconds(), v.getMilliseconds()));
+    const ts = Math.round(Date.UTC(v.getFullYear(), v.getMonth(), v.getDate(), v.getHours(), v.getMinutes(), v.getSeconds(), v.getMilliseconds()) / 60000) * 60000;
     return { ts, display: spFmtTs(ts) };
   }
   if (typeof v === 'number') {
     if (v < 1 || v > 80000) return { invalid: true, display: String(v) };
-    const ts = round((v - 25569) * 86400000);
+    const ts = Math.round(((v - 25569) * 86400000) / 60000) * 60000;
     return { ts, display: spFmtTs(ts) };
   }
 
-  const s = String(v).trim();
+  let s = String(v).replace(/[\u00a0\u2007\u202f]/g, ' ').replace(/[：]/g, ':').replace(/\s+/g, ' ').trim();
   if (!s) return { empty: true };
-  if (/^\d{5}(\.\d+)?$/.test(s)) return spParseDate(Number(s)); // número de série do Excel colado como texto
-  const time = '(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?';
-  let m, y, mo, d, h, mi, se;
+  s = s.replace(/[Zz]$/, '').replace(/[+-]\d{2}:?\d{2}$/, '').replace(/\.\d+$/, '').trim();
+  if (/^\d{5}([.,]\d+)?$/.test(s)) return spParseDate(Number(s.replace(',', '.')));
 
-  if ((m = s.match(new RegExp('^(\\d{4})[-/.](\\d{1,2})[-/.](\\d{1,2})' + time)))) {
+  const time = '(?:[ T](\\d{1,2})[:.](\\d{2})(?:[:.](\\d{2}))?)?';
+  let m, y, mo, d, h, mi, se;
+  if ((m = s.match(new RegExp('^(\\d{4})[-/.](\\d{1,2})[-/.](\\d{1,2})' + time + '$')))) {
     [y, mo, d, h, mi, se] = [m[1], m[2], m[3], m[4], m[5], m[6]];
-  } else if ((m = s.match(new RegExp('^(\\d{1,2})[-/.](\\d{1,2})[-/.](\\d{4})' + time)))) {
+  } else if ((m = s.match(new RegExp('^(\\d{1,2})[-/.](\\d{1,2})[-/.](\\d{4})' + time + '$')))) {
     let a = Number(m[1]), b = Number(m[2]);
-    if (b > 12 && a <= 12) [a, b] = [b, a]; // mm/dd/aaaa
+    if (b > 12 && a <= 12) [a, b] = [b, a];
     [y, mo, d, h, mi, se] = [m[3], b, a, m[4], m[5], m[6]];
   } else {
     return { invalid: true, display: s };
   }
-  [y, mo, d] = [Number(y), Number(mo), Number(d)];
-  h = Number(h || 0); mi = Number(mi || 0); se = Number(se || 0);
-  const date = new Date(Date.UTC(y, mo - 1, d, h, mi, se));
-  if (date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d) return { invalid: true, display: s };
-  const ts = round(date.getTime());
-  return { ts, display: spFmtTs(ts) };
+  return spDateParts(y, mo, d, h, mi, se) || { invalid: true, display: s };
 }
 
 /* ---------- Leitura do template ---------- */
@@ -215,17 +219,16 @@ function spEvaluate(parsed, ref) {
       }
     }
 
-    if (from.invalid) issues.push({ type: 'date', msg: `validityFrom inválida ("${from.display}")` });
-    if (to.invalid) issues.push({ type: 'date', msg: `validityTo inválida ("${to.display}")` });
-    if (from.ts !== undefined && to.ts !== undefined && from.ts > to.ts) {
-      issues.push({ type: 'date', msg: `validityFrom (${from.display}) maior que validityTo (${to.display})` });
+    if (from.ts !== undefined && to.ts !== undefined && to.ts <= from.ts) {
+      issues.push({ type: 'date', msg: `validityTo (${to.display}) não é posterior a validityFrom (${from.display})` });
     }
 
     results.push({
       line, modelCode, price, refPrice, issues,
       fromOverride: !!(modelCode && ref.fromOverride && ref.fromOverride.has(modelCode.toUpperCase())),
       cmsSite: String(get(cells, 'cmsSite') ?? '').trim(),
-      from: from.display || '', to: to.display || ''
+      from: from.display || String(get(cells, 'validityFrom') || ''),
+      to: to.display || String(get(cells, 'validityTo') || '')
     });
   });
   return results;
@@ -369,8 +372,8 @@ function spRunTemplate() {
       nPrice ? `${nPrice} linha(s) com preço abaixo do mínimo` : 'nenhum preço abaixo do mínimo', spEvidence(results, 'price')),
     spCheckItem(nZero ? 'fail' : 'ok', `${pc} diferente de zero`,
       nZero ? `${nZero} modelo(s) com ${pc} zero` : `nenhum ${pc} zero`, spEvidence(results, 'zero')),
-    spCheckItem(nDate ? 'fail' : 'ok', 'validityFrom não maior que validityTo',
-      nDate ? `${nDate} linha(s) com problema de data` : 'todas as datas OK', spEvidence(results, 'date')),
+    spCheckItem(nDate ? 'fail' : 'ok', 'validityTo posterior a validityFrom',
+      nDate ? `${nDate} linha(s) com validityTo menor ou igual a validityFrom` : 'validityTo depois de validityFrom', spEvidence(results, 'date')),
     cmsItem
   ].join('');
 

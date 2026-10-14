@@ -227,7 +227,7 @@ function vcEvaluate(parsed) {
       from: from.display || String(get(cells, 'start') || ''),
       to: to.display || String(get(cells, 'end') || '')
     };
-  }).filter(Boolean);
+  }).filter(Boolean).map((r, i) => ({ ...r, line: i + 1 }));
 }
 
 function vcCheckItem(status, title, summary, evidence) {
