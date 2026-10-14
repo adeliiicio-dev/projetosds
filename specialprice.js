@@ -32,7 +32,7 @@ const SP_SITE_CATALOG = {
 };
 
 const SP_COLUMNS = ['modelCode', 'price', 'currency', 'unit', 'cmsSite', 'minqtd', 'discountPercent', 'userPriceGroup', 'validityFrom', 'validityTo'];
-const SP_REQUIRED = ['modelCode', 'price', 'validityFrom', 'validityTo'];
+const SP_REQUIRED = ['modelCode', 'price', 'currency', 'unit', 'validityFrom', 'validityTo'];
 const SP_TABLE_ROWS = 300;
 
 const spState = {
@@ -201,12 +201,16 @@ function spEvaluate(parsed, ref) {
     const issues = [];
     const modelCode = String(get(cells, 'modelCode') ?? '').trim();
     const price = spToNumber(get(cells, 'price'));
+    const currency = String(get(cells, 'currency') ?? '').trim();
+    const unit = String(get(cells, 'unit') ?? '').trim();
     const from = spParseDate(get(cells, 'validityFrom'));
     const to = spParseDate(get(cells, 'validityTo'));
     let refPrice;
 
     if (!modelCode) issues.push({ type: 'invalid', msg: 'modelCode vazio' });
     if (price === null) issues.push({ type: 'invalid', msg: `price vazio ou inválido ("${get(cells, 'price')}")` });
+    if (!currency) issues.push({ type: 'fields', msg: 'currency vazia' });
+    if (!unit) issues.push({ type: 'fields', msg: 'unit vazia' });
 
     if (modelCode) {
       refPrice = ref.map.get(modelCode.toUpperCase());
@@ -224,7 +228,7 @@ function spEvaluate(parsed, ref) {
     }
 
     results.push({
-      line, modelCode, price, refPrice, issues,
+      line, modelCode, price, currency, unit, refPrice, issues,
       fromOverride: !!(modelCode && ref.fromOverride && ref.fromOverride.has(modelCode.toUpperCase())),
       cmsSite: String(get(cells, 'cmsSite') ?? '').trim(),
       from: from.display || String(get(cells, 'validityFrom') || ''),
@@ -351,7 +355,7 @@ function spRunTemplate() {
   spState.templateOk = ok;
   spState.templateSummary = `${results.length} linhas, ${failedRows} com erro`;
 
-  const nInvalid = count('invalid'), nNotFound = count('notfound'), nPrice = count('price'), nZero = count('zero'), nDate = count('date');
+  const nInvalid = count('invalid'), nNotFound = count('notfound'), nPrice = count('price'), nZero = count('zero'), nDate = count('date'), nFields = count('fields');
   const pc = ref.priceColumn;
 
   // cmsSite: informativo (não reprova)
@@ -366,6 +370,8 @@ function spRunTemplate() {
   const checks = [
     spCheckItem(nInvalid ? 'fail' : 'ok', 'Dados válidos (modelCode e price preenchidos)',
       nInvalid ? `${nInvalid} linha(s) com problema` : 'todas as linhas OK', spEvidence(results, 'invalid')),
+    spCheckItem(nFields ? 'fail' : 'ok', 'currency e unit preenchidos',
+      nFields ? `${nFields} linha(s) com currency ou unit vazia` : 'todas as linhas com currency e unit', spEvidence(results, 'fields')),
     spCheckItem(nNotFound ? 'fail' : 'ok', `modelCode encontrado em Minimum prices (${info.catalog})`,
       nNotFound ? `${nNotFound} modelCode não encontrado(s)` : `todos encontrados (${results.length - nInvalid})`, spEvidence(results, 'notfound')),
     spCheckItem(nPrice ? 'fail' : 'ok', `price do template não menor que ${pc}`,
@@ -391,13 +397,15 @@ function spRunTemplate() {
     </div>
     <div class="table-wrap">
       <table class="table table-sm table-dark table-bordered mb-0">
-        <thead><tr><th>Linha</th><th>modelCode</th><th>price (template)</th><th>${pc} (Minimum prices)</th><th>cmsSite</th><th>validityFrom</th><th>validityTo</th><th>Resultado</th></tr></thead>
+        <thead><tr><th>Linha</th><th>modelCode</th><th>price (template)</th><th>${pc} (Minimum prices)</th><th>currency</th><th>unit</th><th>cmsSite</th><th>validityFrom</th><th>validityTo</th><th>Resultado</th></tr></thead>
         <tbody>${shown.map(r => `
           <tr class="${r.issues.length ? 'row-fail' : ''}">
             <td class="muted">${r.line}</td>
             <td><strong>${escapeHtml(r.modelCode)}</strong></td>
             <td class="num">${r.price === null ? '-' : mpFmtNumber(r.price)}</td>
             <td class="num ${r.refPrice === 0 ? 'cell-bad' : 'price-read'}">${r.refPrice === undefined ? '-' : mpFmtNumber(r.refPrice)}${r.fromOverride ? ' <small class="muted">extra</small>' : ''}</td>
+            <td class="${r.issues.some(i => i.msg === 'currency vazia') ? 'cell-bad' : ''}">${escapeHtml(r.currency || '')}</td>
+            <td class="${r.issues.some(i => i.msg === 'unit vazia') ? 'cell-bad' : ''}">${escapeHtml(r.unit || '')}</td>
             <td>${escapeHtml(r.cmsSite)}</td>
             <td>${escapeHtml(r.from)}</td>
             <td>${escapeHtml(r.to)}</td>
