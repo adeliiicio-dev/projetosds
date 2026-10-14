@@ -112,6 +112,8 @@ function spFmtTs(ts) {
   return d.getUTCHours() || d.getUTCMinutes() ? `${date} ${spPad(d.getUTCHours())}:${spPad(d.getUTCMinutes())}` : date;
 }
 
+const SP_DATE_STRICT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
 function spDateParts(y, mo, d, h, mi, se) {
   y = Number(y); mo = Number(mo); d = Number(d);
   h = Number(h || 0); mi = Number(mi || 0); se = Number(se || 0);
@@ -153,6 +155,14 @@ function spParseDate(v) {
     return { invalid: true, display: s };
   }
   return spDateParts(y, mo, d, h, mi, se) || { invalid: true, display: s };
+}
+
+function spStrictDate(raw) {
+  const s = String(raw ?? '');
+  if (!SP_DATE_STRICT.test(s)) return { ok: false, display: s };
+  const parts = spDateParts(s.slice(0, 4), s.slice(5, 7), s.slice(8, 10), s.slice(11, 13), s.slice(14, 16), s.slice(17, 19));
+  if (!parts) return { ok: false, display: s };
+  return { ok: true, ts: parts.ts, display: s };
 }
 
 /* ---------- Leitura do template ---------- */
@@ -203,8 +213,10 @@ function spEvaluate(parsed, ref) {
     const price = spToNumber(get(cells, 'price'));
     const currency = String(get(cells, 'currency') ?? '').trim();
     const unit = String(get(cells, 'unit') ?? '').trim();
-    const from = spParseDate(get(cells, 'validityFrom'));
-    const to = spParseDate(get(cells, 'validityTo'));
+    const fromRaw = get(cells, 'validityFrom');
+    const toRaw = get(cells, 'validityTo');
+    const from = spStrictDate(fromRaw);
+    const to = spStrictDate(toRaw);
     let refPrice;
 
     if (!modelCode) issues.push({ type: 'invalid', msg: 'modelCode vazio' });
@@ -223,7 +235,9 @@ function spEvaluate(parsed, ref) {
       }
     }
 
-    if (from.ts !== undefined && to.ts !== undefined && to.ts <= from.ts) {
+    if (!from.ok) issues.push({ type: 'datefmt', msg: `validityFrom deve ser YYYY-MM-DD HH:MM:SS ("${fromRaw}")` });
+    if (!to.ok) issues.push({ type: 'datefmt', msg: `validityTo deve ser YYYY-MM-DD HH:MM:SS ("${toRaw}")` });
+    if (from.ok && to.ok && to.ts <= from.ts) {
       issues.push({ type: 'date', msg: `validityTo (${to.display}) não é posterior a validityFrom (${from.display})` });
     }
 
@@ -231,8 +245,8 @@ function spEvaluate(parsed, ref) {
       line, modelCode, price, currency, unit, refPrice, issues,
       fromOverride: !!(modelCode && ref.fromOverride && ref.fromOverride.has(modelCode.toUpperCase())),
       cmsSite: String(get(cells, 'cmsSite') ?? '').trim(),
-      from: from.display || String(get(cells, 'validityFrom') || ''),
-      to: to.display || String(get(cells, 'validityTo') || '')
+      from: String(fromRaw ?? ''),
+      to: String(toRaw ?? '')
     });
   });
   return results;
@@ -355,7 +369,7 @@ function spRunTemplate() {
   spState.templateOk = ok;
   spState.templateSummary = `${results.length} linhas, ${failedRows} com erro`;
 
-  const nInvalid = count('invalid'), nNotFound = count('notfound'), nPrice = count('price'), nZero = count('zero'), nDate = count('date'), nFields = count('fields');
+  const nInvalid = count('invalid'), nNotFound = count('notfound'), nPrice = count('price'), nZero = count('zero'), nDate = count('date'), nDateFmt = count('datefmt'), nFields = count('fields');
   const pc = ref.priceColumn;
 
   // cmsSite: informativo (não reprova)
@@ -378,6 +392,8 @@ function spRunTemplate() {
       nPrice ? `${nPrice} linha(s) com preço abaixo do mínimo` : 'nenhum preço abaixo do mínimo', spEvidence(results, 'price')),
     spCheckItem(nZero ? 'fail' : 'ok', `${pc} diferente de zero`,
       nZero ? `${nZero} modelo(s) com ${pc} zero` : `nenhum ${pc} zero`, spEvidence(results, 'zero')),
+    spCheckItem(nDateFmt ? 'fail' : 'ok', 'validityFrom e validityTo no padrão YYYY-MM-DD HH:MM:SS',
+      nDateFmt ? `${nDateFmt} linha(s) com data fora do padrão (sem aspas, sem ' e sem extra)` : 'todas no padrão 2026-10-14 05:00:00', spEvidence(results, 'datefmt')),
     spCheckItem(nDate ? 'fail' : 'ok', 'validityTo posterior a validityFrom',
       nDate ? `${nDate} linha(s) com validityTo menor ou igual a validityFrom` : 'validityTo depois de validityFrom', spEvidence(results, 'date')),
     cmsItem
@@ -407,8 +423,8 @@ function spRunTemplate() {
             <td class="${r.issues.some(i => i.msg === 'currency vazia') ? 'cell-bad' : ''}">${escapeHtml(r.currency || '')}</td>
             <td class="${r.issues.some(i => i.msg === 'unit vazia') ? 'cell-bad' : ''}">${escapeHtml(r.unit || '')}</td>
             <td>${escapeHtml(r.cmsSite)}</td>
-            <td>${escapeHtml(r.from)}</td>
-            <td>${escapeHtml(r.to)}</td>
+            <td class="${r.issues.some(i => i.type === 'datefmt' && i.msg.startsWith('validityFrom')) || r.issues.some(i => i.type === 'date') ? 'cell-bad' : ''}">${escapeHtml(r.from)}</td>
+            <td class="${r.issues.some(i => i.type === 'datefmt' && i.msg.startsWith('validityTo')) || r.issues.some(i => i.type === 'date') ? 'cell-bad' : ''}">${escapeHtml(r.to)}</td>
             <td>${r.issues.length
               ? `<span class="status-bad"><i class="bi bi-x-circle-fill"></i> ${r.issues.map(i => escapeHtml(i.msg)).join('; ')}</span>`
               : '<span class="status-good"><i class="bi bi-check-circle-fill"></i> OK</span>'}</td>
@@ -491,5 +507,5 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 if (typeof module !== 'undefined') {
-  module.exports = { spParseDate, spEvaluate, spParseTemplate };
+  module.exports = { spParseDate, spStrictDate, spEvaluate, spParseTemplate };
 }
