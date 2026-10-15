@@ -401,6 +401,14 @@ h1 {
 .pr-map-table td.pr-col-on { background: rgba(20, 40, 160, .28); }
 .pr-map-table td { white-space: normal; max-width: 240px; }
 
+.vc-map-table th { cursor: pointer; white-space: nowrap; }
+.vc-map-table th:hover { background: rgba(107, 134, 255, .25); }
+.vc-map-table th.vc-start { background: var(--samsung-blue); color: #fff; }
+.vc-map-table th.vc-end { background: #0f9d8e; color: #fff; }
+.vc-map-table td.vc-col-start { background: rgba(20, 40, 160, .28); }
+.vc-map-table td.vc-col-end { background: rgba(15, 157, 142, .28); }
+.vc-map-table td { white-space: normal; max-width: 240px; }
+
 .table-wrap td.pr-formula {
   max-width: 220px;
   font-size: .75rem;

@@ -136,4 +136,5 @@ document.addEventListener('DOMContentLoaded', () => {
     templateTimer = setTimeout(handleTemplateText, 250);
   });
   document.getElementById('btnLimpar').addEventListener('click', clearAll);
+  document.getElementById('btnLimparTop').addEventListener('click', clearAll);
 });

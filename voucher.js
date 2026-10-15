@@ -1,11 +1,15 @@
 /* ===== Triagem > Voucher: PUMI + conferência da planilha colada ===== */
 
 const VC_TABLE_ROWS = 100;
+const VC_MAP_ROWS = 40;
 
 const vcState = {
   pumi: null,       // { text, result }
   template: null,   // { text }
-  templateOk: null
+  templateOk: null,
+  startCol: -1,
+  endCol: -1,
+  sheetKey: ''
 };
 
 function vcCleanCell(s) {
@@ -124,7 +128,25 @@ function vcFindHeader(norm, aliases) {
   return -1;
 }
 
-function vcParseTemplate(text) {
+function vcPadCells(cells, width) {
+  const out = cells.slice();
+  while (out.length < width) out.push('');
+  return out;
+}
+
+function vcCollectRows(lines, delim, width) {
+  const allRows = [];
+  let skippedEmpty = 0;
+  lines.forEach(({ content, line }) => {
+    if (!content.trim()) { skippedEmpty++; return; }
+    const cells = vcPadCells(content.split(delim).map(c => vcCleanCell(mpStripQuotes(c))), width);
+    if (vcRowAllEmpty(cells)) { skippedEmpty++; return; }
+    allRows.push({ line, cells });
+  });
+  return { allRows, skippedEmpty };
+}
+
+function vcReadSheet(text) {
   const lines = vcNormalizeText(text).replace(/\r/g, '').split('\n').map((content, i) => ({ content, line: i + 1 }));
   let headerIdx = -1, delim = '\t';
   for (let i = 0; i < Math.min(lines.length, 15); i++) {
@@ -134,11 +156,35 @@ function vcParseTemplate(text) {
       headerIdx = i; delim = d; break;
     }
   }
+
   if (headerIdx < 0) {
-    return { headerFound: false, missing: ['Type of discount (cabeçalho não encontrado)'], columns: {}, headers: [], rows: [] };
+    const first = lines.find(l => l.content.trim());
+    if (!first) {
+      return {
+        headerFound: false,
+        missing: ['Type of discount (cabeçalho não encontrado)'],
+        headers: [],
+        allRows: [],
+        guessed: { type: -1, value: -1, start: -1, end: -1, message: -1 },
+        skippedEmpty: 0
+      };
+    }
+    delim = mpDetectDelimiter(first.content);
+    const headers = first.content.split(delim).map(c => mpStripQuotes(c));
+    const width = headers.length;
+    const rest = vcCollectRows(lines.filter(l => l.line !== first.line), delim, width);
+    return {
+      headerFound: false,
+      missing: ['Type of discount (cabeçalho não encontrado)'],
+      headers: headers.map((h, i) => String(h || '').trim() || ('Coluna ' + (i + 1))),
+      allRows: rest.allRows,
+      guessed: { type: -1, value: -1, start: -1, end: -1, message: -1 },
+      skippedEmpty: rest.skippedEmpty
+    };
   }
 
   const rawHeaders = lines[headerIdx].content.split(delim).map(c => mpStripQuotes(c));
+  const width = rawHeaders.length;
   const norm = rawHeaders.map(mpNormKey);
   const typeIdx = vcFindHeader(norm, ['typeofdiscount']);
   const valueByName = vcFindHeader(norm, ['discountspricevalue', 'discountpricevalue', 'pricevalue']);
@@ -155,29 +201,111 @@ function vcParseTemplate(text) {
   if (typeIdx >= 0 && valueByName >= 0 && valueByName !== valueIdx) {
     missing.push('Discounts/Price Value precisa ficar logo ao lado de Type of discount');
   }
-  if (startIdx < 0) missing.push('Start Date and Time');
-  if (endIdx < 0) missing.push('End Date and Time');
 
-  const rows = [];
-  let skipped = 0;
-  lines.slice(headerIdx + 1).forEach(({ content, line }) => {
-    if (!content.trim()) { skipped++; return; }
-    const cells = content.split(delim).map(c => vcCleanCell(mpStripQuotes(c)));
-    if (vcRowAllEmpty(cells) || !vcRowComplete(cells, typeIdx, valueIdx, startIdx, endIdx)) {
-      skipped++;
-      return;
-    }
-    rows.push({ line, cells });
-  });
-
+  const rest = vcCollectRows(lines.slice(headerIdx + 1), delim, width);
   return {
     headerFound: true,
     missing,
     headers: rawHeaders,
-    columns: { type: typeIdx, value: valueIdx, start: startIdx, end: endIdx, message: msgIdx },
+    allRows: rest.allRows,
+    guessed: { type: typeIdx, value: valueIdx, start: startIdx, end: endIdx, message: msgIdx },
+    skippedEmpty: rest.skippedEmpty
+  };
+}
+
+function vcRowsForEval(sheet, startIdx, endIdx) {
+  const rows = [];
+  let skipped = sheet.skippedEmpty;
+  sheet.allRows.forEach(r => {
+    if (!vcRowComplete(r.cells, sheet.guessed.type, sheet.guessed.value, startIdx, endIdx)) {
+      skipped++;
+      return;
+    }
+    rows.push(r);
+  });
+  return { rows, skipped };
+}
+
+function vcParseTemplate(text) {
+  const sheet = vcReadSheet(text);
+  if (!sheet.headerFound) {
+    return { headerFound: false, missing: sheet.missing, columns: {}, headers: sheet.headers || [], rows: [], skipped: 0 };
+  }
+  const startIdx = sheet.guessed.start;
+  const endIdx = sheet.guessed.end;
+  const missing = sheet.missing.slice();
+  if (startIdx < 0) missing.push('Start Date and Time');
+  if (endIdx < 0) missing.push('End Date and Time');
+  const { rows, skipped } = vcRowsForEval(sheet, startIdx, endIdx);
+  return {
+    headerFound: true,
+    missing,
+    headers: sheet.headers,
+    columns: { ...sheet.guessed, start: startIdx, end: endIdx },
     rows,
     skipped
   };
+}
+
+function vcSyncDateCols(sheet) {
+  const key = vcState.template ? vcState.template.text : '';
+  if (vcState.sheetKey !== key) {
+    vcState.sheetKey = key;
+    vcState.startCol = sheet.guessed.start;
+    vcState.endCol = sheet.guessed.end;
+  }
+  const n = sheet.headers.length;
+  if (vcState.startCol >= n) vcState.startCol = -1;
+  if (vcState.endCol >= n) vcState.endCol = -1;
+}
+
+function vcPickDateCol(i) {
+  i = Number(i);
+  if (!Number.isFinite(i) || i < 0) return;
+  if (vcState.startCol < 0) {
+    vcState.startCol = i;
+    if (vcState.endCol === i) vcState.endCol = -1;
+    return;
+  }
+  if (vcState.endCol < 0) {
+    if (i === vcState.startCol) vcState.startCol = -1;
+    else vcState.endCol = i;
+    return;
+  }
+  if (i === vcState.startCol) vcState.startCol = -1;
+  else if (i === vcState.endCol) vcState.endCol = -1;
+  else {
+    vcState.startCol = i;
+    vcState.endCol = -1;
+  }
+}
+
+function vcRenderMap(sheet) {
+  if (!sheet.headers.length) return '';
+  const shown = sheet.allRows.slice(0, VC_MAP_ROWS);
+  const role = i => (i === vcState.startCol ? 'start' : (i === vcState.endCol ? 'end' : ''));
+  const hint = vcState.startCol < 0
+    ? 'Clique no <strong>cabeçalho da coluna de Start Date</strong>.'
+    : (vcState.endCol < 0
+      ? 'Clique no <strong>cabeçalho da coluna de End Date</strong>.'
+      : `Start: coluna ${vcState.startCol + 1}. End: coluna ${vcState.endCol + 1}. Clique de novo para trocar.`);
+  return `
+    <div class="muted small mb-2 mt-3">${sheet.headers.length} coluna(s) · ${sheet.allRows.length} linha(s). ${hint}</div>
+    <div class="table-wrap">
+      <table class="table table-sm table-dark table-bordered mb-0 vc-map-table">
+        <thead><tr>${sheet.headers.map((h, i) => {
+          const tag = role(i) === 'start' ? ' · Start' : (role(i) === 'end' ? ' · End' : '');
+          const label = String(h || '').trim();
+          const extra = label && label !== ('Coluna ' + (i + 1)) ? ' · ' + escapeHtml(label) : '';
+          return `<th class="${role(i) ? 'vc-' + role(i) : ''}" data-vc-date="${i}" role="button" tabindex="0">Coluna ${i + 1}${extra}${tag}</th>`;
+        }).join('')}</tr></thead>
+        <tbody>${shown.map(r => `<tr>${sheet.headers.map((_, i) => {
+          const cls = role(i) === 'start' ? 'vc-col-start' : (role(i) === 'end' ? 'vc-col-end' : '');
+          return `<td class="${cls}" data-vc-date="${i}">${escapeHtml(String(r.cells[i] || ''))}</td>`;
+        }).join('')}</tr>`).join('')}</tbody>
+      </table>
+    </div>
+    ${sheet.allRows.length > VC_MAP_ROWS ? `<div class="muted small mt-2">Prévia: ${VC_MAP_ROWS} de ${sheet.allRows.length} linhas.</div>` : ''}`;
 }
 
 function vcKind(type) {
@@ -279,29 +407,51 @@ function vcRunTemplate() {
   vcState.templateOk = null;
   if (!vcState.template) { box.innerHTML = ''; return; }
 
-  const parsed = vcParseTemplate(vcState.template.text);
-  const colChip = (label, idx, required) => {
+  const sheet = vcReadSheet(vcState.template.text);
+  vcSyncDateCols(sheet);
+  const mapHtml = vcRenderMap(sheet);
+
+  const colChip = (label, idx, required, headers) => {
     const found = idx !== undefined && idx >= 0;
     const cls = found ? 'chip-ok' : (required ? 'chip-fail' : 'chip-off');
-    return `<div class="col-chip ${cls}"><strong>${escapeHtml(label)}</strong><span>${found ? `coluna ${idx + 1}${parsed.headers[idx] ? ' · ' + parsed.headers[idx] : ''}` : (required ? 'NÃO ENCONTRADA' : 'não encontrada')}</span></div>`;
+    return `<div class="col-chip ${cls}"><strong>${escapeHtml(label)}</strong><span>${found ? `coluna ${idx + 1}${headers[idx] ? ' · ' + headers[idx] : ''}` : (required ? 'NÃO ENCONTRADA' : 'não encontrada')}</span></div>`;
   };
 
-  const chips = parsed.headerFound ? `<div class="col-chips mt-3">
-    ${colChip('Type of discount', parsed.columns.type, true)}
-    ${colChip('Discounts/Price Value (ao lado)', parsed.columns.value, true)}
-    ${colChip('Start Date and Time', parsed.columns.start, true)}
-    ${colChip('End Date and Time', parsed.columns.end, true)}
-    ${colChip('Promotion message in the cart', parsed.columns.message, false)}
-  </div>` : '';
+  const chips = `<div class="col-chips mt-3">
+    ${colChip('Type of discount', sheet.guessed.type, true, sheet.headers)}
+    ${colChip('Discounts/Price Value (ao lado)', sheet.guessed.value, true, sheet.headers)}
+    ${colChip('Start Date and Time', vcState.startCol, true, sheet.headers)}
+    ${colChip('End Date and Time', vcState.endCol, true, sheet.headers)}
+    ${colChip('Promotion message in the cart', sheet.guessed.message, false, sheet.headers)}
+  </div>`;
 
-  if (!parsed.headerFound || parsed.missing.length) {
+  if (!sheet.headerFound || sheet.missing.length) {
     vcState.templateOk = false;
     box.innerHTML = `
       <div class="result-banner result-fail mt-3"><i class="bi bi-x-circle-fill"></i>
         <div><div class="result-title">FALHA</div>
-          <div class="result-sub">${escapeHtml(parsed.missing.join('; ') || 'Cabeçalho da planilha não encontrado.')}</div></div></div>${chips}`;
+          <div class="result-sub">${escapeHtml(sheet.missing.join('; ') || 'Cabeçalho da planilha não encontrado.')}</div></div></div>${mapHtml}${chips}`;
     return;
   }
+
+  if (vcState.startCol < 0 || vcState.endCol < 0) {
+    vcState.templateOk = null;
+    box.innerHTML = `
+      <div class="result-banner result-wait mt-3"><i class="bi bi-hourglass-split"></i>
+        <div><div class="result-title">TABELA LIDA</div>
+          <div class="result-sub">Clique no cabeçalho da coluna de Start Date, depois no de End Date.</div></div></div>${mapHtml}${chips}`;
+    return;
+  }
+
+  const { rows, skipped } = vcRowsForEval(sheet, vcState.startCol, vcState.endCol);
+  const parsed = {
+    headerFound: true,
+    missing: [],
+    headers: sheet.headers,
+    columns: { ...sheet.guessed, start: vcState.startCol, end: vcState.endCol },
+    rows,
+    skipped
+  };
 
   const results = vcEvaluate(parsed);
   const discFails = results.filter(r => r.issues.some(i => i.type === 'discount'));
@@ -356,13 +506,13 @@ function vcRunTemplate() {
     ${vcCheckItem('info', 'Promotion message in the cart',
       messages.length ? `${messages.length} mensagem(ns) distinta(s)` : 'coluna não encontrada ou vazia',
       messages.map(r => `<span class="ev-snippet">linha ${r.line} · <mark>${escapeHtml(r.message || '(vazio)')}</mark></span>`))}
-    ${chips}${table}`;
+    ${mapHtml}${chips}${table}`;
 }
 
 function vcRenderOverall() {
   const box = document.getElementById('vcOverall');
   const pumi = vcState.pumi && vcState.pumi.result ? (vcState.pumi.result.ok ? 'ok' : 'fail') : 'wait';
-  const tpl = vcState.template ? (vcState.templateOk ? 'ok' : 'fail') : 'wait';
+  const tpl = !vcState.template ? 'wait' : (vcState.templateOk === null ? 'wait' : (vcState.templateOk ? 'ok' : 'fail'));
   const line = (status, label, text) => {
     const icon = { ok: 'bi-check-circle-fill', fail: 'bi-x-circle-fill', wait: 'bi-hourglass-split' }[status];
     return `<div class="overall-line overall-${status}"><i class="bi ${icon}"></i><strong>${label}</strong><span>${text}</span></div>`;
@@ -373,10 +523,10 @@ function vcRenderOverall() {
     ? '<div class="result-banner result-ok"><i class="bi bi-check-circle-fill"></i><div><div class="result-title">TRIAGEM APROVADA</div><div class="result-sub">PUMI e template conferem.</div></div></div>'
     : anyFail
       ? '<div class="result-banner result-fail"><i class="bi bi-x-circle-fill"></i><div><div class="result-title">TRIAGEM REPROVADA</div><div class="result-sub">Veja os itens com erro abaixo.</div></div></div>'
-      : '<div class="result-banner result-wait"><i class="bi bi-hourglass-split"></i><div><div class="result-title">AGUARDANDO</div><div class="result-sub">Cole o PUMI e a planilha do voucher.</div></div></div>';
+      : '<div class="result-banner result-wait"><i class="bi bi-hourglass-split"></i><div><div class="result-title">AGUARDANDO</div><div class="result-sub">Cole o PUMI e a planilha. Se precisar, clique nas colunas de data.</div></div></div>';
   box.innerHTML = `${banner}<div class="overall-list">
     ${line(pumi, 'PUMI', pumi === 'wait' ? 'não colado' : (pumi === 'ok' ? 'aprovador encontrado e sem "pending"' : 'reprovado'))}
-    ${line(tpl, 'Template', tpl === 'wait' ? 'não colado' : (tpl === 'ok' ? 'todas as regras OK' : 'com erros'))}
+    ${line(tpl, 'Template', tpl === 'wait' ? (vcState.template ? 'escolha as colunas de data' : 'não colado') : (tpl === 'ok' ? 'todas as regras OK' : 'com erros'))}
   </div>`;
 }
 
@@ -390,6 +540,9 @@ function vcClear() {
   vcState.pumi = null;
   vcState.template = null;
   vcState.templateOk = null;
+  vcState.startCol = -1;
+  vcState.endCol = -1;
+  vcState.sheetKey = '';
   document.getElementById('vcPumiText').value = '';
   document.getElementById('vcTemplateText').value = '';
   vcRefresh();
@@ -419,10 +572,17 @@ if (typeof document !== 'undefined') {
       }
     });
     document.getElementById('btnVcLimpar').addEventListener('click', vcClear);
+    document.getElementById('vcTemplateResult').addEventListener('click', e => {
+      const b = e.target.closest('[data-vc-date]');
+      if (!b) return;
+      vcPickDateCol(b.dataset.vcDate);
+      vcRunTemplate();
+      vcRenderOverall();
+    });
     vcRenderOverall();
   });
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { vcParseTemplate, vcEvaluate, vcKind, vcRowAllEmpty, vcBlank, vcRowComplete, vcSheetFromHtml };
+  module.exports = { vcParseTemplate, vcReadSheet, vcRowsForEval, vcEvaluate, vcKind, vcRowAllEmpty, vcBlank, vcRowComplete, vcSheetFromHtml };
 }
