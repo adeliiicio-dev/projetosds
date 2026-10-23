@@ -1,5 +1,23 @@
 /* ===== Navegação ===== */
+const TRIAGE_SCREENS = ['special-price', 'voucher', 'knox'];
+let currentScreen = 'triagem';
+
+function clearTriageScreen(name) {
+  if (name === 'special-price') {
+    if (typeof spReset === 'function') spReset();
+    else if (typeof clearAll === 'function') clearAll();
+  } else if (name === 'voucher' && typeof vcClear === 'function') {
+    vcClear();
+  } else if (name === 'knox' && typeof knoxClear === 'function') {
+    knoxClear();
+  }
+}
+
 function showScreen(name, menuItem) {
+  if (currentScreen !== name && TRIAGE_SCREENS.includes(currentScreen)) {
+    clearTriageScreen(currentScreen);
+  }
+  currentScreen = name;
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById('screen-' + name);
   if (target) target.classList.add('active');

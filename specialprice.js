@@ -482,6 +482,12 @@ function spRefresh() {
   spRenderOverall();
 }
 
+function spReset() {
+  spState.onlyErrors = null;
+  spState.templateOk = null;
+  clearAll();
+}
+
 /* ---------- Eventos ---------- */
 
 document.addEventListener('DOMContentLoaded', () => {

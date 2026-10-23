@@ -274,6 +274,12 @@ function knoxBanner(item) {
   </div>`;
 }
 
+function knoxClear() {
+  const ta = document.getElementById('knoxText');
+  if (ta) ta.value = '';
+  knoxRefresh();
+}
+
 function knoxRefresh() {
   const ta = document.getElementById('knoxText');
   const out = document.getElementById('knoxResult');
@@ -296,10 +302,7 @@ document.addEventListener('DOMContentLoaded', () => {
     ta.addEventListener('paste', () => setTimeout(knoxRefresh, 0));
   }
   if (clear) {
-    clear.addEventListener('click', () => {
-      if (ta) ta.value = '';
-      knoxRefresh();
-    });
+    clear.addEventListener('click', knoxClear);
   }
   knoxRefresh();
 });
