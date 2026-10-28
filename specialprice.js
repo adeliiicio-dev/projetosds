@@ -49,7 +49,8 @@ const spState = {
   country: 'CL',
   site: 'eStore',
   onlyErrors: null, // null = automático (liga quando há erros)
-  errorType: ''
+  errorType: '',
+  modelCode: ''
 };
 
 function spCountry(code) {
@@ -433,10 +434,37 @@ function spRunTemplate() {
   if (spState.errorType && !errorTypes.includes(spState.errorType)) spState.errorType = '';
   let view = onlyErrors ? results.filter(r => r.issues.length) : results;
   if (spState.errorType) view = results.filter(r => r.issues.some(i => i.type === spState.errorType));
+
+  const codeCount = new Map();
+  view.forEach(r => {
+    const k = String(r.modelCode || '').trim();
+    if (!k) return;
+    codeCount.set(k, (codeCount.get(k) || 0) + 1);
+  });
+  const codes = Array.from(codeCount.keys()).sort((a, b) => a.localeCompare(b));
+  if (spState.modelCode && !codeCount.has(spState.modelCode)) spState.modelCode = '';
+  if (spState.modelCode) view = view.filter(r => r.modelCode === spState.modelCode);
+
   const shown = view.slice(0, SP_TABLE_ROWS);
   const typeOpts = errorTypes.map(t =>
     `<option value="${t}" ${spState.errorType === t ? 'selected' : ''}>${escapeHtml(SP_ERROR_LABELS[t])} (${count(t)})</option>`
   ).join('');
+  const codeOpts = codes.map(code => {
+    const n = codeCount.get(code);
+    return `<option value="${escapeHtml(code)}" ${spState.modelCode === code ? 'selected' : ''}>${escapeHtml(code)}${n > 1 ? ' (' + n + 'x)' : ''}</option>`;
+  }).join('');
+
+  const col = {
+    price: view.some(r => r.price === null || r.issues.some(i => i.type === 'price' || (i.type === 'invalid' && /price/.test(i.msg)))),
+    ref: view.some(r => r.issues.some(i => i.type === 'notfound' || i.type === 'zero' || i.type === 'price')),
+    currency: view.some(r => r.issues.some(i => i.msg === 'currency vazia')),
+    unit: view.some(r => r.issues.some(i => i.msg === 'unit vazia')),
+    from: view.some(r => r.issues.some(i => i.type === 'date' || (i.type === 'datefmt' && i.msg.startsWith('validityFrom')))),
+    to: view.some(r => r.issues.some(i => i.type === 'date' || (i.type === 'datefmt' && i.msg.startsWith('validityTo'))))
+  };
+  const th = (on, html) => on ? html : '';
+  const td = (on, html) => on ? html : '';
+
   const table = `
     <div class="d-flex flex-wrap align-items-center gap-3 mt-3 mb-2">
       <div class="form-check m-0">
@@ -449,22 +477,36 @@ function spRunTemplate() {
           ${typeOpts}
         </select>
       </label>` : ''}
+      ${codes.length ? `<label class="m-0 d-flex align-items-center gap-2">modelCode
+        <select id="spModelCode" class="form-select form-select-sm" style="width:auto">
+          <option value="">Todos</option>
+          ${codeOpts}
+        </select>
+      </label>` : ''}
       <div class="muted small">${view.length} de ${results.length} linhas${view.length > SP_TABLE_ROWS ? ` (mostrando ${SP_TABLE_ROWS})` : ''}</div>
     </div>
     <div class="table-wrap">
       <table class="table table-sm table-dark table-bordered mb-0">
-        <thead><tr><th>Linha</th><th>modelCode</th><th>price (template)</th><th>${pc} (Minimum prices)</th><th>currency</th><th>unit</th><th>cmsSite</th><th>validityFrom</th><th>validityTo</th><th>Resultado</th></tr></thead>
+        <thead><tr>
+          <th>Linha</th><th>modelCode</th>
+          ${th(col.price, '<th>price (template)</th>')}
+          ${th(col.ref, `<th>${escapeHtml(pc)} (Minimum prices)</th>`)}
+          ${th(col.currency, '<th>currency</th>')}
+          ${th(col.unit, '<th>unit</th>')}
+          ${th(col.from, '<th>validityFrom</th>')}
+          ${th(col.to, '<th>validityTo</th>')}
+          <th>Resultado</th>
+        </tr></thead>
         <tbody>${shown.map(r => `
           <tr class="${r.issues.length ? 'row-fail' : ''}">
             <td class="muted">${r.line}</td>
             <td><strong>${escapeHtml(r.modelCode)}</strong></td>
-            <td class="num">${r.price === null ? '-' : mpFmtNumber(r.price)}</td>
-            <td class="num ${r.refPrice === 0 ? 'cell-bad' : 'price-read'}">${r.refPrice === undefined ? '-' : mpFmtNumber(r.refPrice)}${r.fromOverride ? ' <small class="muted">extra</small>' : ''}</td>
-            <td class="${r.issues.some(i => i.msg === 'currency vazia') ? 'cell-bad' : ''}">${escapeHtml(r.currency || '')}</td>
-            <td class="${r.issues.some(i => i.msg === 'unit vazia') ? 'cell-bad' : ''}">${escapeHtml(r.unit || '')}</td>
-            <td>${escapeHtml(r.cmsSite)}</td>
-            <td class="${r.issues.some(i => i.type === 'datefmt' && i.msg.startsWith('validityFrom')) || r.issues.some(i => i.type === 'date') ? 'cell-bad' : ''}">${escapeHtml(r.from)}</td>
-            <td class="${r.issues.some(i => i.type === 'datefmt' && i.msg.startsWith('validityTo')) || r.issues.some(i => i.type === 'date') ? 'cell-bad' : ''}">${escapeHtml(r.to)}</td>
+            ${td(col.price, `<td class="num">${r.price === null ? '-' : mpFmtNumber(r.price)}</td>`)}
+            ${td(col.ref, `<td class="num ${r.refPrice === 0 ? 'cell-bad' : 'price-read'}">${r.refPrice === undefined ? '-' : mpFmtNumber(r.refPrice)}${r.fromOverride ? ' <small class="muted">extra</small>' : ''}</td>`)}
+            ${td(col.currency, `<td class="${r.issues.some(i => i.msg === 'currency vazia') ? 'cell-bad' : ''}">${escapeHtml(r.currency || '')}</td>`)}
+            ${td(col.unit, `<td class="${r.issues.some(i => i.msg === 'unit vazia') ? 'cell-bad' : ''}">${escapeHtml(r.unit || '')}</td>`)}
+            ${td(col.from, `<td class="${r.issues.some(i => i.type === 'datefmt' && i.msg.startsWith('validityFrom')) || r.issues.some(i => i.type === 'date') ? 'cell-bad' : ''}">${escapeHtml(r.from)}</td>`)}
+            ${td(col.to, `<td class="${r.issues.some(i => i.type === 'datefmt' && i.msg.startsWith('validityTo')) || r.issues.some(i => i.type === 'date') ? 'cell-bad' : ''}">${escapeHtml(r.to)}</td>`)}
             <td>${r.issues.length
               ? `<span class="status-bad"><i class="bi bi-x-circle-fill"></i> ${r.issues.map(i => escapeHtml(i.msg)).join('; ')}</span>`
               : '<span class="status-good"><i class="bi bi-check-circle-fill"></i> OK</span>'}</td>
@@ -525,6 +567,7 @@ function spRefresh() {
 function spReset() {
   spState.onlyErrors = null;
   spState.errorType = '';
+  spState.modelCode = '';
   spState.templateOk = null;
   clearAll();
 }
@@ -551,6 +594,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (e.target.id === 'spErrorType') {
       spState.errorType = e.target.value;
+      spRunTemplate();
+    }
+    if (e.target.id === 'spModelCode') {
+      spState.modelCode = e.target.value;
       spRunTemplate();
     }
   });
