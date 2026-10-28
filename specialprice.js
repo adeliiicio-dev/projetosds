@@ -35,10 +35,21 @@ const SP_COLUMNS = ['modelCode', 'price', 'currency', 'unit', 'cmsSite', 'minqtd
 const SP_REQUIRED = ['modelCode', 'price', 'currency', 'unit', 'validityFrom', 'validityTo'];
 const SP_TABLE_ROWS = 300;
 
+const SP_ERROR_LABELS = {
+  invalid: 'modelCode / price inválido',
+  fields: 'currency / unit vazia',
+  notfound: 'não encontrado no Minimum prices',
+  price: 'preço abaixo do mínimo',
+  zero: 'mínimo zero',
+  datefmt: 'data fora do padrão',
+  date: 'validityTo não posterior a From'
+};
+
 const spState = {
   country: 'CL',
   site: 'eStore',
-  onlyErrors: null // null = automático (liga quando há erros)
+  onlyErrors: null, // null = automático (liga quando há erros)
+  errorType: ''
 };
 
 function spCountry(code) {
@@ -195,10 +206,27 @@ function spParseTemplate(text) {
   return { headerFound: true, columns, missing, rows };
 }
 
+function spParsePrice(raw) {
+  let s = String(raw ?? '').trim().replace(/[^\d.,-]/g, '');
+  if (!s || !/\d/.test(s)) return null;
+  const neg = /^-/.test(s);
+  s = s.replace(/-/g, '');
+  const comma = s.lastIndexOf(',');
+  if (comma >= 0) {
+    const intPart = s.slice(0, comma).replace(/[.,]/g, '');
+    const frac = s.slice(comma + 1).replace(/\D/g, '');
+    s = (intPart || '0') + (frac ? '.' + frac : '');
+  } else {
+    s = s.replace(/\./g, '');
+  }
+  const n = Number((neg ? '-' : '') + s);
+  return Number.isFinite(n) ? n : null;
+}
+
 function spToNumber(v) {
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
   if (v === '' || v === null || v === undefined) return null;
-  return mpParsePrice(v);
+  return spParsePrice(v);
 }
 
 /* ---------- Conferência ---------- */
@@ -401,14 +429,26 @@ function spRunTemplate() {
 
   // Tabela com a prova linha a linha
   const onlyErrors = spState.onlyErrors === null ? !ok : spState.onlyErrors;
-  const view = onlyErrors ? results.filter(r => r.issues.length) : results;
+  const errorTypes = Object.keys(SP_ERROR_LABELS).filter(t => count(t));
+  if (spState.errorType && !errorTypes.includes(spState.errorType)) spState.errorType = '';
+  let view = onlyErrors ? results.filter(r => r.issues.length) : results;
+  if (spState.errorType) view = results.filter(r => r.issues.some(i => i.type === spState.errorType));
   const shown = view.slice(0, SP_TABLE_ROWS);
+  const typeOpts = errorTypes.map(t =>
+    `<option value="${t}" ${spState.errorType === t ? 'selected' : ''}>${escapeHtml(SP_ERROR_LABELS[t])} (${count(t)})</option>`
+  ).join('');
   const table = `
     <div class="d-flex flex-wrap align-items-center gap-3 mt-3 mb-2">
       <div class="form-check m-0">
         <input class="form-check-input" type="checkbox" id="spOnlyErrors" ${onlyErrors ? 'checked' : ''}>
         <label class="form-check-label" for="spOnlyErrors">Mostrar só linhas com erro</label>
       </div>
+      ${errorTypes.length ? `<label class="m-0 d-flex align-items-center gap-2">Tipo de erro
+        <select id="spErrorType" class="form-select form-select-sm" style="width:auto">
+          <option value="">Todos</option>
+          ${typeOpts}
+        </select>
+      </label>` : ''}
       <div class="muted small">${view.length} de ${results.length} linhas${view.length > SP_TABLE_ROWS ? ` (mostrando ${SP_TABLE_ROWS})` : ''}</div>
     </div>
     <div class="table-wrap">
@@ -484,6 +524,7 @@ function spRefresh() {
 
 function spReset() {
   spState.onlyErrors = null;
+  spState.errorType = '';
   spState.templateOk = null;
   clearAll();
 }
@@ -508,10 +549,14 @@ document.addEventListener('DOMContentLoaded', () => {
       spState.onlyErrors = e.target.checked;
       spRunTemplate();
     }
+    if (e.target.id === 'spErrorType') {
+      spState.errorType = e.target.value;
+      spRunTemplate();
+    }
   });
   spRefresh();
 });
 
 if (typeof module !== 'undefined') {
-  module.exports = { spParseDate, spStrictDate, spEvaluate, spParseTemplate };
+  module.exports = { spParseDate, spStrictDate, spParsePrice, spEvaluate, spParseTemplate };
 }
