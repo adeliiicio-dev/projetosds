@@ -191,9 +191,34 @@ function knoxSplit(text) {
   return { type: line, action: '' };
 }
 
-const KNOX_INDEX = KNOX_ROWS.map(([type, action, knox]) => ({
-  type, action, knox, nt: knoxNorm(type), na: knoxNorm(action)
-}));
+const KNOX_STORAGE_KEY = 'sds-knox-table';
+let knoxEditIdx = -1;
+
+function knoxDefaultRows() {
+  return KNOX_ROWS.map(([type, action, knox]) => ({ type, action, knox: !!knox }));
+}
+
+function knoxLoad() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(KNOX_STORAGE_KEY));
+    if (Array.isArray(raw) && raw.length) {
+      return raw.map(r => ({
+        type: String(r.type || '').trim(),
+        action: String(r.action || '').trim(),
+        knox: !!r.knox
+      })).filter(r => r.type && r.action);
+    }
+  } catch { /* usa a tabela padrão */ }
+  return knoxDefaultRows();
+}
+
+function knoxSave(rows) {
+  localStorage.setItem(KNOX_STORAGE_KEY, JSON.stringify(rows));
+}
+
+function knoxIndex() {
+  return knoxLoad().map(r => ({ ...r, nt: knoxNorm(r.type), na: knoxNorm(r.action) }));
+}
 
 function knoxLookup(text) {
   const raw = String(text || '').trim();
@@ -202,6 +227,7 @@ function knoxLookup(text) {
   const { type, action } = knoxSplit(raw);
   const nt = knoxNorm(type);
   const na = knoxNorm(action);
+  const KNOX_INDEX = knoxIndex();
 
   let hit = KNOX_INDEX.find(r => r.nt === nt && r.na === na);
   if (!hit && na) {
@@ -274,6 +300,79 @@ function knoxBanner(item) {
   </div>`;
 }
 
+function knoxFormReset() {
+  knoxEditIdx = -1;
+  const type = document.getElementById('knoxType');
+  const action = document.getElementById('knoxAction');
+  const flag = document.getElementById('knoxFlag');
+  const save = document.getElementById('btnKnoxSave');
+  const cancel = document.getElementById('btnKnoxCancel');
+  if (type) type.value = '';
+  if (action) action.value = '';
+  if (flag) flag.value = '1';
+  if (save) save.textContent = 'Adicionar';
+  if (cancel) cancel.classList.add('d-none');
+}
+
+function knoxStartEdit(i) {
+  const rows = knoxLoad();
+  const row = rows[i];
+  if (!row) return;
+  knoxEditIdx = i;
+  document.getElementById('knoxType').value = row.type;
+  document.getElementById('knoxAction').value = row.action;
+  document.getElementById('knoxFlag').value = row.knox ? '1' : '0';
+  document.getElementById('btnKnoxSave').textContent = 'Salvar';
+  document.getElementById('btnKnoxCancel').classList.remove('d-none');
+  document.getElementById('knoxType').focus();
+}
+
+function knoxCommitForm() {
+  const type = String(document.getElementById('knoxType').value || '').trim();
+  const action = String(document.getElementById('knoxAction').value || '').trim();
+  const knox = document.getElementById('knoxFlag').value === '1';
+  if (!type || !action) return;
+  const rows = knoxLoad();
+  const nt = knoxNorm(type);
+  const na = knoxNorm(action);
+  const dup = rows.findIndex((r, i) => i !== knoxEditIdx && knoxNorm(r.type) === nt && knoxNorm(r.action) === na);
+  const row = { type, action, knox };
+  if (knoxEditIdx >= 0 && knoxEditIdx < rows.length) {
+    rows[knoxEditIdx] = row;
+    if (dup >= 0) rows.splice(dup, 1);
+  } else if (dup >= 0) {
+    rows[dup] = row;
+  } else {
+    rows.push(row);
+  }
+  knoxSave(rows);
+  knoxFormReset();
+  knoxRenderTable();
+  knoxRefresh();
+}
+
+function knoxRenderTable() {
+  const box = document.getElementById('knoxTable');
+  if (!box) return;
+  const rows = knoxLoad();
+  const sorted = rows.map((r, i) => ({ ...r, i }))
+    .sort((a, b) => a.type.localeCompare(b.type, 'pt') || a.action.localeCompare(b.action, 'pt'));
+  box.innerHTML = `
+    <div class="muted small mb-2">${rows.length} item(s)</div>
+    <div class="table-wrap">
+      <table class="table table-sm table-dark table-bordered mb-0">
+        <thead><tr><th>Configuration type</th><th>Action</th><th>Knox</th><th></th></tr></thead>
+        <tbody>${sorted.map(r => `
+          <tr>
+            <td>${escapeHtml(r.type)}</td>
+            <td>${escapeHtml(r.action)}</td>
+            <td class="${r.knox ? 'status-good' : 'status-bad'}">${r.knox ? 'SIM' : 'NÃO'}</td>
+            <td><button type="button" class="btn btn-sm btn-outline-secondary" data-knox-edit="${r.i}">Editar</button></td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
 function knoxClear() {
   const ta = document.getElementById('knoxText');
   if (ta) ta.value = '';
@@ -283,6 +382,7 @@ function knoxClear() {
 function knoxRefresh() {
   const ta = document.getElementById('knoxText');
   const out = document.getElementById('knoxResult');
+  knoxRenderTable();
   if (!ta || !out) return;
 
   const lines = String(ta.value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
@@ -304,5 +404,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (clear) {
     clear.addEventListener('click', knoxClear);
   }
+  document.getElementById('btnKnoxSave')?.addEventListener('click', knoxCommitForm);
+  document.getElementById('btnKnoxCancel')?.addEventListener('click', knoxFormReset);
+  document.getElementById('knoxTable')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-knox-edit]');
+    if (!b) return;
+    knoxStartEdit(Number(b.dataset.knoxEdit));
+  });
   knoxRefresh();
 });

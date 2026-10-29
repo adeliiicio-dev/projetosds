@@ -48,21 +48,17 @@ function mpStripQuotes(s) {
   return t.length >= 2 && t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1).replace(/""/g, '"').trim() : t;
 }
 
-// Converte "1.234,56", "1,234.56", "$ 1234.5", "12345" em número. Retorna null se não for número.
+// Vírgula sempre é centavos. Ponto é milhar. "234.222,234" = 234222.234; "199.990" = 199990.
 function mpParsePrice(raw) {
   let s = String(raw ?? '').trim().replace(/[^\d.,-]/g, '');
   if (!s || !/\d/.test(s)) return null;
-  const dots = (s.match(/\./g) || []).length;
-  const commas = (s.match(/,/g) || []).length;
-  if (dots && commas) {
-    const decimalSep = s.lastIndexOf('.') > s.lastIndexOf(',') ? '.' : ',';
-    const thousandSep = decimalSep === '.' ? ',' : '.';
-    s = s.split(thousandSep).join('').replace(decimalSep, '.');
-  } else if (commas) {
-    if (commas > 1 || /,\d{3}$/.test(s)) s = s.replace(/,/g, '');
-    else s = s.replace(',', '.');
-  } else if (dots > 1 || /^-?\d{1,3}\.\d{3}$/.test(s)) {
-    s = s.replace(/\./g, ''); // "199.990" = milhar (padrão de Chile/Colômbia/Peru)
+  const comma = s.lastIndexOf(',');
+  if (comma >= 0) {
+    const intPart = s.slice(0, comma).replace(/[.,]/g, '');
+    const frac = s.slice(comma + 1).replace(/\D/g, '');
+    s = (intPart || '0') + (frac ? '.' + frac : '');
+  } else if ((s.match(/\./g) || []).length > 1 || /^-?\d{1,3}\.\d{3}$/.test(s)) {
+    s = s.replace(/\./g, '');
   }
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
