@@ -1,21 +1,11 @@
-/* ===== Lista de prioridades: montar planilha (tabela atual + tabela nova do país) ===== */
+/* ===== Lista de prioridades: montar planilha (tabela atual + tabela nova) ===== */
 
-const PR_COUNTRIES = [
-  { code: 'CO', name: 'Colômbia', sub: 'SAMCOL' },
-  { code: 'MX', name: 'México', sub: 'SEM' },
-  { code: 'CL', name: 'Chile', sub: 'SECH' },
-  { code: 'PE', name: 'Peru', sub: 'SEPR' }
-];
-
-const PR_OUT_COLUMNS = ['Sub', 'Ticket', 'Status', 'Assignee', 'Priority', 'Link', 'Comentário', 'Campaigns'];
-const PR_JIRA_LOOKUP = "'https://samsung.sharepoint.com/sites/COESDSLA/Shared Documents/GBA Documents & Files/Dashboards 2026/Dashboard CoE - TLC - TNE/[updateJira.xlsx]updateJira'!$A:$E";
-const PR_JIRA_BROWSE = 'https://jira.secext.samsung.net/browse/';
+const PR_OUT_COLUMNS = ['Ticket', 'Comentário'];
 const PR_TABLE_ROWS = 200;
 const PR_CURRENT_COMMENT_COL = 6; // 7ª coluna do colado (1-indexed)
 const PR_MAP_ROWS = 40;
 
 const prState = {
-  country: 'CO',
   ticketCol: -1,
   commentCol: -1,
   noComment: false,
@@ -23,10 +13,6 @@ const prState = {
   pickedComment: false,
   built: []
 };
-
-function prCountry(code) {
-  return PR_COUNTRIES.find(c => c.code === (code || prState.country));
-}
 
 function prNormKey(s) {
   return foldText(String(s || '')).replace(/[^a-z0-9]/g, '');
@@ -293,7 +279,7 @@ function prNewTickets(parsed, ticketCol, commentCol, noComment) {
   return { rows, dups };
 }
 
-function prMerge(currentRows, newRows, sub) {
+function prMerge(currentRows, newRows) {
   const oldMap = new Map();
   currentRows.forEach(r => { if (!oldMap.has(r.ticket)) oldMap.set(r.ticket, r); });
   const seen = new Set();
@@ -312,7 +298,6 @@ function prMerge(currentRows, newRows, sub) {
     else if (!hasNewComment && old && old.comment) stats.commentOld++;
     out.push({
       ticket: n.ticket,
-      sub,
       comment,
       source: old ? 'ambos' : 'nova',
       commentFrom: hasNewComment ? 'nova' : (old && old.comment ? 'atual' : '')
@@ -325,7 +310,6 @@ function prMerge(currentRows, newRows, sub) {
     stats.fromOld++;
     out.push({
       ticket: o.ticket,
-      sub: o.sub || sub,
       comment: o.comment,
       source: 'atual',
       commentFrom: o.comment ? 'atual' : ''
@@ -335,30 +319,11 @@ function prMerge(currentRows, newRows, sub) {
   return { rows: out, stats };
 }
 
-function prFormulaStatus(row) { return `=VLOOKUP(B${row},${PR_JIRA_LOOKUP},3,0)`; }
-function prFormulaAssignee(row) { return `=VLOOKUP(B${row},${PR_JIRA_LOOKUP},2,0)`; }
-function prFormulaLink(row) {
-  return `=HYPERLINK(IF(B${row}="","",CONCATENATE("${PR_JIRA_BROWSE}",B${row})))`;
-}
-function prFormulaCampaigns(row) { return `=VLOOKUP(B${row},${PR_JIRA_LOOKUP},5,0)`; }
-
 function prBuildSheet(merged) {
-  return merged.map((r, i) => {
-    const excelRow = i + 1;
-    return {
-      excelRow,
-      Sub: r.sub,
-      Ticket: r.ticket,
-      Status: prFormulaStatus(excelRow),
-      Assignee: prFormulaAssignee(excelRow),
-      Priority: i + 1,
-      Link: prFormulaLink(excelRow),
-      Comentário: r.comment,
-      Campaigns: prFormulaCampaigns(excelRow),
-      source: r.source,
-      commentFrom: r.commentFrom
-    };
-  });
+  return merged.map(r => ({
+    Ticket: r.ticket,
+    Comentário: r.comment
+  }));
 }
 
 function prToTsv(built, withHeader) {
@@ -370,26 +335,7 @@ function prToTsv(built, withHeader) {
   return lines.join('\r\n');
 }
 
-function prSelOptions(headers, selected, scores, samples) {
-  return headers.map((h, i) => {
-    const n = scores && scores[i] ? ` (${scores[i]} ticket${scores[i] > 1 ? 's' : ''})` : '';
-    const ex = samples && samples[i] ? ` — ${samples[i]}` : '';
-    return `<option value="${i}" ${i === selected ? 'selected' : ''}>${i + 1}. ${escapeHtml(h || '(vazio)')}${n}${escapeHtml(ex)}</option>`;
-  }).join('');
-}
-
-function prRenderCountry() {
-  document.getElementById('prTabs').innerHTML = PR_COUNTRIES.map(c => `
-    <button type="button" class="country-tab ${c.code === prState.country ? 'active' : ''}" data-pr-country="${c.code}">
-      <span class="country-tab-code">${c.code}</span>
-      <span class="country-tab-name">${escapeHtml(c.name)}</span>
-      <span class="country-tab-status">Sub: ${c.sub}</span>
-    </button>`).join('');
-}
-
 function prRefresh() {
-  prRenderCountry();
-  const c = prCountry();
   const current = prParseCurrent(document.getElementById('prCurrentText').value);
   const neu = prParseNew(document.getElementById('prNewText').value);
 
@@ -426,14 +372,14 @@ function prRefresh() {
         </table>
       </div>
       ${neu.data.length > PR_MAP_ROWS ? `<div class="muted small mt-2">Prévia: ${PR_MAP_ROWS} de ${neu.data.length} linhas.</div>` : ''}
-      <div class="muted small mt-2">${sel >= 0 ? 'Comentário: coluna ' + (sel + 1) + '.' : 'Ainda não escolheu a coluna de comentário.'} Sub: <strong>${escapeHtml(c.sub)}</strong>.</div>`;
+      <div class="muted small mt-2">${sel >= 0 ? 'Comentário: coluna ' + (sel + 1) + '.' : 'Ainda não escolheu a coluna de comentário.'}</div>`;
   }
 
   const out = document.getElementById('prResult');
   const hasCurrent = !!(document.getElementById('prCurrentText').value || '').trim();
   const hasNew = !!(document.getElementById('prNewText').value || '').trim();
   if (!hasCurrent && !hasNew) {
-    out.innerHTML = '<div class="result-banner result-wait"><i class="bi bi-hourglass-split"></i><div><div class="result-title">AGUARDANDO</div><div class="result-sub">Cole a tabela atual e a tabela nova do país.</div></div></div>';
+    out.innerHTML = '<div class="result-banner result-wait"><i class="bi bi-hourglass-split"></i><div><div class="result-title">AGUARDANDO</div><div class="result-sub">Cole a tabela atual e a tabela nova.</div></div></div>';
     prState.built = [];
     return;
   }
@@ -465,7 +411,7 @@ function prRefresh() {
     prState.built = [];
     return;
   }
-  const merged = prMerge(current.ok ? current.rows : [], extracted.rows, c.sub);
+  const merged = prMerge(current.ok ? current.rows : [], extracted.rows);
   const built = prBuildSheet(merged.rows);
   prState.built = built;
 
@@ -476,7 +422,7 @@ function prRefresh() {
       <i class="bi bi-check-circle-fill"></i>
       <div>
         <div class="result-title">PLANILHA MONTADA</div>
-        <div class="result-sub">${built.length} linha(s) · nova ${extracted.rows.length} · atual ${current.ok ? current.rows.length : 0} (sobra ${st.fromOld}) · Priority 1…${built.length} · fórmulas a partir da linha 1 (B1).</div>
+        <div class="result-sub">${built.length} linha(s) · nova ${extracted.rows.length} · atual ${current.ok ? current.rows.length : 0} (sobra ${st.fromOld}). Só Ticket e Comentário.</div>
       </div>
     </div>
     <div class="stats">
@@ -489,40 +435,17 @@ function prRefresh() {
     ${hasCurrent && current.ok && !current.rows.length ? '<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>Tabela atual</strong><span>nenhum LC- + 5 dígitos. Só a nova entrou.</span></div></div>' : ''}
     ${extracted.dups.length ? `<div class="check-item check-info"><div class="check-head"><i class="bi bi-info-circle-fill"></i><strong>Duplicados na nova</strong><span>mantive a primeira ocorrência: ${escapeHtml([...new Set(extracted.dups)].join(', '))}</span></div></div>` : ''}
     <div class="table-wrap"><table class="table table-sm table-dark mb-0">
-      <thead><tr>${PR_OUT_COLUMNS.map(h => `<th>${escapeHtml(h)}</th>`).join('')}<th>Origem</th></tr></thead>
+      <thead><tr>${PR_OUT_COLUMNS.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>
       <tbody>${shown.map(r => `<tr>
-        <td>${escapeHtml(r.Sub)}</td>
         <td><strong>${escapeHtml(r.Ticket)}</strong></td>
-        <td class="pr-formula" title="${escapeHtml(r.Status)}">=VLOOKUP(B${r.excelRow}…,3,0)</td>
-        <td class="pr-formula" title="${escapeHtml(r.Assignee)}">=VLOOKUP(B${r.excelRow}…,2,0)</td>
-        <td>${r.Priority}</td>
-        <td class="pr-formula" title="${escapeHtml(r.Link)}">=HYPERLINK(…B${r.excelRow})</td>
         <td>${escapeHtml(r.Comentário)}</td>
-        <td class="pr-formula" title="${escapeHtml(r.Campaigns)}">=VLOOKUP(B${r.excelRow}…,5,0)</td>
-        <td class="muted">${escapeHtml(r.source)}${r.commentFrom ? ' · com. ' + r.commentFrom : ''}</td>
       </tr>`).join('')}</tbody></table></div>
       ${built.length > PR_TABLE_ROWS ? `<div class="muted small mt-2">Prévia: ${PR_TABLE_ROWS} de ${built.length} linhas. O copiar leva todas.</div>` : ''}
       <div class="muted small mt-2">Use <strong>Copiar linhas</strong> (só o conteúdo, sem cor) ou <strong>Baixar Excel</strong>.</div>`;
 }
 
-function prFormulaCells(built) {
-  return built.map(r => PR_OUT_COLUMNS.map(c => {
-    const v = r[c];
-    if (typeof v === 'string' && v.charAt(0) === '=') return 0;
-    if (c === 'Priority') return Number(v);
-    return v == null ? '' : v;
-  }));
-}
-
-function prApplyFormulas(ws, built) {
-  built.forEach((r, ri) => {
-    PR_OUT_COLUMNS.forEach((c, ci) => {
-      const v = r[c];
-      if (typeof v === 'string' && v.charAt(0) === '=') {
-        ws[XLSX.utils.encode_cell({ r: ri, c: ci })] = { t: 'n', f: v.replace(/^=/, ''), v: 0 };
-      }
-    });
-  });
+function prValueCells(built) {
+  return built.map(r => PR_OUT_COLUMNS.map(c => r[c] == null ? '' : r[c]));
 }
 
 function prCopyHtml(built) {
@@ -573,8 +496,7 @@ function prDownloadXlsx() {
   const built = prState.built;
   if (!built || !built.length) { alert('Nada para baixar. Cole as tabelas primeiro.'); return; }
   if (typeof XLSX === 'undefined') { alert('Biblioteca de Excel não carregou.'); return; }
-  const ws = XLSX.utils.aoa_to_sheet(prFormulaCells(built));
-  prApplyFormulas(ws, built);
+  const ws = XLSX.utils.aoa_to_sheet(prValueCells(built));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Prioridades');
   XLSX.writeFile(wb, 'prioridades.xlsx');
@@ -612,13 +534,6 @@ function prClear() {
 
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
-    prRenderCountry();
-    document.getElementById('prTabs').addEventListener('click', e => {
-      const b = e.target.closest('[data-pr-country]');
-      if (!b) return;
-      prState.country = b.dataset.prCountry;
-      prRefresh();
-    });
     let t1, t2;
     document.getElementById('prCurrentText').addEventListener('input', () => {
       clearTimeout(t1); t1 = setTimeout(prRefresh, 250);
@@ -652,6 +567,6 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    prExtractTicket, prTicketFromRow, prParseCurrent, prParseNew, prNewTickets, prMerge, prBuildSheet, prToTsv, prFormulaStatus, prFormulaLink, prDetectDelimiter, prSplitSheet, prSheetFromHtml, prSplitLoose
+    prExtractTicket, prTicketFromRow, prParseCurrent, prParseNew, prNewTickets, prMerge, prBuildSheet, prToTsv, prDetectDelimiter, prSplitSheet, prSheetFromHtml, prSplitLoose
   };
 }
