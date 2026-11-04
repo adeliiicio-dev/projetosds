@@ -283,15 +283,23 @@ function mpRenderTabs() {
   const ov = mpLoadOverrides();
   document.getElementById('mpTabs').innerHTML = MP_COUNTRIES.map(c => {
     const saved = all[c.code];
-    const extras = ov[c.code]?.rows?.length || 0;
-    const status = saved
-      ? (saved.rows.length + ' registros' + (extras ? ' · ' + extras + ' extra' + (extras > 1 ? 's' : '') : ''))
-      : (extras ? extras + ' extra' + (extras > 1 ? 's' : '') + ' · sem oficial' : 'sem dados');
+    const extra = ov[c.code];
+    const extras = extra?.rows?.length || 0;
+    const lines = [];
+    if (saved) {
+      lines.push(saved.rows.length + ' registros');
+      if (saved.savedAt) lines.push('oficial: ' + mpFmtDate(saved.savedAt));
+    } else {
+      lines.push('sem oficial');
+    }
+    if (extras) {
+      lines.push(extras + ' extra' + (extras > 1 ? 's' : '') + (extra.savedAt ? ' · ' + mpFmtDate(extra.savedAt) : ''));
+    }
     return `
       <button type="button" class="country-tab ${c.code === mpState.country ? 'active' : ''}" data-country="${c.code}">
         <span class="country-tab-code">${c.code}</span>
         <span class="country-tab-name">${escapeHtml(c.name)}</span>
-        <span class="country-tab-status ${saved || extras ? 'saved' : ''}">${status}</span>
+        <span class="country-tab-status ${saved || extras ? 'saved' : ''}">${lines.join('<br>')}</span>
       </button>`;
   }).join('');
 }
@@ -466,19 +474,34 @@ function mpRenderSaved() {
 
 function mpRenderSaveProof() {
   const box = document.getElementById('mpSaveProof');
-  const s = mpState.lastSave;
-  if (!s || s.code !== mpState.country) { box.innerHTML = ''; return; }
-  const ok = s.matched === s.expected && s.expected > 0;
-  box.innerHTML = `
-    <div class="result-banner ${ok ? 'result-ok' : 'result-fail'} mt-3">
-      <i class="bi ${ok ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}"></i>
-      <div>
-        <div class="result-title">${ok ? 'SALVO' : 'FALHA AO SALVAR'}</div>
-        <div class="result-sub">${escapeHtml(mpCountry(s.code).name)} · ${mpFmtDate(s.savedAt)} · preço da coluna <strong>${s.priceColumn}</strong> ·
-          conferência na leitura de volta: <strong>${s.matched} de ${s.expected}</strong> registros (${MP_KEY_COLUMN} + catálogo) com o mesmo preço.
-          Preços fora do padrão deste país foram apagados.</div>
-      </div>
-    </div>`;
+  const s = mpState.lastSave && mpState.lastSave.code === mpState.country ? mpState.lastSave : null;
+  const saved = mpLoadAll()[mpState.country];
+  if (s) {
+    const ok = s.matched === s.expected && s.expected > 0;
+    box.innerHTML = `
+      <div class="result-banner ${ok ? 'result-ok' : 'result-fail'} mt-3">
+        <i class="bi ${ok ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}"></i>
+        <div>
+          <div class="result-title">${ok ? 'SALVO' : 'FALHA AO SALVAR'}</div>
+          <div class="result-sub">${escapeHtml(mpCountry(s.code).name)} · última atualização ${mpFmtDate(s.savedAt)} · preço da coluna <strong>${s.priceColumn}</strong> ·
+            conferência na leitura de volta: <strong>${s.matched} de ${s.expected}</strong> registros (${MP_KEY_COLUMN} + catálogo) com o mesmo preço.
+            Preços fora do padrão deste país foram apagados.</div>
+        </div>
+      </div>`;
+    return;
+  }
+  if (saved && saved.savedAt) {
+    box.innerHTML = `
+      <div class="result-banner result-wait mt-3">
+        <i class="bi bi-clock-history"></i>
+        <div>
+          <div class="result-title">ÚLTIMA ATUALIZAÇÃO</div>
+          <div class="result-sub">${escapeHtml(mpCountry().name)} · oficial ${mpFmtDate(saved.savedAt)} · ${saved.rows.length} registros · coluna <strong>${escapeHtml(saved.priceColumn)}</strong>.</div>
+        </div>
+      </div>`;
+    return;
+  }
+  box.innerHTML = '<div class="muted small mt-3">Nenhuma planilha oficial salva neste país.</div>';
 }
 
 function mpRenderOverride() {
@@ -521,7 +544,14 @@ function mpRenderOverride() {
       <i class="bi bi-check-circle-fill"></i>
       <div><div class="result-title">EXTRAS SALVOS</div>
         <div class="result-sub">${escapeHtml(ls.scope)} · ${ls.count} modelCode(s) · ${mpFmtDate(ls.savedAt)}</div></div></div>`;
-  } else proof.innerHTML = '';
+  } else if (savedOv && savedOv.savedAt) {
+    proof.innerHTML = `<div class="result-banner result-wait mt-3">
+      <i class="bi bi-clock-history"></i>
+      <div><div class="result-title">ÚLTIMA ATUALIZAÇÃO DOS EXTRAS</div>
+        <div class="result-sub">${escapeHtml(c.name)} · ${mpFmtDate(savedOv.savedAt)} · ${savedOv.rows.length} modelCode(s).</div></div></div>`;
+  } else {
+    proof.innerHTML = '<div class="muted small mt-3">Nenhum extra salvo neste país.</div>';
+  }
 
   if (!savedOv || !savedOv.rows.length) {
     tableBox.innerHTML = '<div class="muted">Nenhum preço extra salvo neste país.</div>';
