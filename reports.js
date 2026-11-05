@@ -3,14 +3,17 @@
 const RP_STORAGE_KEY = 'sds-reports-v1';
 
 const RP_DAYS = [
-  { id: 'seg', name: 'Segunda' },
-  { id: 'ter', name: 'Terça' },
-  { id: 'qua', name: 'Quarta' },
-  { id: 'qui', name: 'Quinta' },
-  { id: 'sex', name: 'Sexta' },
-  { id: 'sab', name: 'Sábado' },
-  { id: 'dom', name: 'Domingo' }
+  { id: 'seg', name: 'Segunda', short: 'Seg' },
+  { id: 'ter', name: 'Terça', short: 'Ter' },
+  { id: 'qua', name: 'Quarta', short: 'Qua' },
+  { id: 'qui', name: 'Quinta', short: 'Qui' },
+  { id: 'sex', name: 'Sexta', short: 'Sex' },
+  { id: 'sab', name: 'Sábado', short: 'Sáb' },
+  { id: 'dom', name: 'Domingo', short: 'Dom' }
 ];
+
+const RP_KEY_COL = 0;
+const RP_SUB_COL = 8;
 
 const RP_SLOTS = [
   { id: 'h18', label: '18h–19h' },
@@ -156,25 +159,11 @@ function rpRowsToTsv(rows) {
   return rows.map(r => r.cells.map(c => String(c ?? '').replace(/\t/g, ' ').replace(/\r?\n/g, ' ')).join('\t')).join('\n');
 }
 
-function rpFindHeader(rows) {
-  const n = Math.min(rows.length, 15);
-  for (let i = 0; i < n; i++) {
-    const norm = rows[i].cells.map(rpNorm);
-    const hasKey = norm.some(c => c === 'key' || c === 'issuekey' || c === 'chave');
-    const hasOther = norm.some(c => c === 'summary' || c === 'issuetype' || c === 'status' || c === 'coesubsidiaries' || c === 'assignee');
-    if (hasKey && hasOther) return i;
-  }
-  return -1;
-}
-
-function rpFindCol(headers, names) {
-  for (let i = 0; i < headers.length; i++) {
-    if (names.some(n => headers[i] === n)) return i;
-  }
-  for (let i = 0; i < headers.length; i++) {
-    if (names.some(n => n.length > 4 && headers[i].includes(n))) return i;
-  }
-  return -1;
+function rpIsHeaderRow(cells) {
+  const norm = (cells || []).map(rpNorm);
+  if (norm[0] === 'key' || norm[0] === 'issuekey' || norm[0] === 'chave') return true;
+  const names = ['key', 'summary', 'status', 'created', 'reporter', 'assignee', 'coesubsidiaries', 'actions'];
+  return names.filter(n => norm.includes(n)).length >= 3;
 }
 
 function rpParseBox(text) {
@@ -184,31 +173,28 @@ function rpParseBox(text) {
   if (!sheet || !sheet.rows.length) {
     return { rows: [], count: 0, error: 'Não foi possível ler a colagem.', warning: '' };
   }
-  const headerAt = rpFindHeader(sheet.rows);
-  if (headerAt < 0) {
-    return { rows: [], count: 0, error: 'Cabeçalho Key não encontrado.', warning: '' };
-  }
-  const headers = sheet.rows[headerAt].cells.map(rpNorm);
-  const keyIdx = rpFindCol(headers, ['key', 'issuekey', 'chave']);
-  if (keyIdx < 0) {
-    return { rows: [], count: 0, error: 'Cabeçalho Key não encontrado.', warning: '' };
-  }
-  const subIdx = rpFindCol(headers, ['coesubsidiaries', 'coesubsidiary']);
-  const warning = subIdx < 0 ? 'Coluna COE_subsidiaries não encontrada.' : '';
   const seen = new Set();
   const rows = [];
-  for (let i = headerAt + 1; i < sheet.rows.length; i++) {
-    const cells = sheet.rows[i].cells;
-    if (!cells.some(c => rpCleanCell(c))) continue;
-    const key = rpKeyOf(cells[keyIdx]);
-    if (!key || seen.has(key)) continue;
+  sheet.rows.forEach(row => {
+    if (rpIsHeaderRow(row.cells)) return;
+    const key = rpKeyOf(row.cells[RP_KEY_COL]);
+    if (!/^[A-Z][A-Z0-9]+-\d+$/.test(key) || seen.has(key)) return;
     seen.add(key);
-    const subsidiary = subIdx < 0
-      ? '(sem COE_subsidiaries)'
-      : (rpCleanCell(cells[subIdx]) || '(vazio)');
-    rows.push({ key, subsidiary });
-  }
+    rows.push({ key, subsidiary: rpCleanCell(row.cells[RP_SUB_COL]) || '(vazio)' });
+  });
+  const warning = rows.length ? '' : 'Nenhuma Key na colagem.';
   return { rows, count: rows.length, error: '', warning };
+}
+
+function rpFmt(n) {
+  const rounded = Math.round(n * 10) / 10;
+  const [whole, frac] = rounded.toFixed(1).split('.');
+  return frac === '0' ? whole : `${whole},${frac}`;
+}
+
+function rpShort(text, max) {
+  const t = String(text || '');
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
 function rpDayById(id) {
@@ -219,7 +205,7 @@ function rpSlotById(id) {
   return RP_SLOTS.find(s => s.id === id) || RP_SLOTS[0];
 }
 
-// Cada caixa conta Key única. No dia, a Key entra uma vez na subsidiary da primeira faixa que a trouxe.
+// Key única dentro da faixa. A mesma Key em outra faixa conta de novo, na subsidiary daquela faixa.
 function rpBuildReport(texts) {
   const boxes = [];
   RP_DAYS.forEach(day => {
@@ -229,26 +215,19 @@ function rpBuildReport(texts) {
     });
   });
 
-  const max = boxes.reduce((m, b) => Math.max(m, b.count), 0);
-  const winners = max > 0 ? boxes.filter(b => b.count === max) : [];
-
   const subs = new Map();
-  RP_DAYS.forEach(day => {
-    const seen = new Map();
-    RP_SLOTS.forEach(slot => {
-      const box = boxes.find(b => b.day === day.id && b.slot === slot.id);
-      box.rows.forEach(row => {
-        if (!seen.has(row.key)) seen.set(row.key, row.subsidiary);
-      });
-    });
-    seen.forEach(subsidiary => {
-      if (!subs.has(subsidiary)) {
-        const days = {};
-        RP_DAYS.forEach(d => { days[d.id] = 0; });
-        subs.set(subsidiary, { name: subsidiary, days, total: 0 });
-      }
-      const rec = subs.get(subsidiary);
-      rec.days[day.id] += 1;
+  const touchSub = name => {
+    if (!subs.has(name)) {
+      const days = {};
+      RP_DAYS.forEach(d => { days[d.id] = 0; });
+      subs.set(name, { name, days, total: 0 });
+    }
+    return subs.get(name);
+  };
+  boxes.forEach(box => {
+    box.rows.forEach(row => {
+      const rec = touchSub(row.subsidiary);
+      rec.days[box.day] += 1;
       rec.total += 1;
     });
   });
@@ -258,11 +237,28 @@ function rpBuildReport(texts) {
     return a.name.localeCompare(b.name, 'pt');
   });
 
-  return { boxes, max, winners, subsidiaries };
-}
+  const dayTotals = RP_DAYS.map(day => ({
+    id: day.id,
+    total: boxes.filter(b => b.day === day.id).reduce((sum, b) => sum + b.count, 0)
+  }));
+  const periodTotals = RP_SLOTS.map(slot => ({
+    id: slot.id,
+    total: boxes.filter(b => b.slot === slot.id).reduce((sum, b) => sum + b.count, 0)
+  }));
+  const total = dayTotals.reduce((sum, d) => sum + d.total, 0);
+  const periodMax = periodTotals.reduce((m, p) => Math.max(m, p.total), 0);
+  const periodWinners = periodMax > 0 ? periodTotals.filter(p => p.total === periodMax) : [];
+  const subMax = subsidiaries.reduce((m, s) => Math.max(m, s.total), 0);
+  const subWinners = subMax > 0 ? subsidiaries.filter(s => s.total === subMax) : [];
+  const boxMax = boxes.reduce((m, b) => Math.max(m, b.count), 0);
+  const boxWinners = boxMax > 0 ? boxes.filter(b => b.count === boxMax) : [];
 
-function rpWinnerLabel(winners) {
-  return winners.map(w => `${rpDayById(w.day).name} ${rpSlotById(w.slot).label}`).join(', ');
+  return {
+    boxes, subsidiaries, dayTotals, periodTotals, total,
+    periodMax, periodWinners, subMax, subWinners, boxMax, boxWinners,
+    averagePerDay: total / RP_DAYS.length,
+    averagePerPeriod: total / RP_SLOTS.length
+  };
 }
 
 function rpLoad() {
@@ -353,71 +349,128 @@ function rpUpdateSlotMeta(slotId) {
   el.textContent = meta.text;
 }
 
+function rpBars(items) {
+  const max = Math.max(1, ...items.map(it => it.value));
+  const rowH = 26;
+  const width = 360;
+  const labelW = 78;
+  const height = Math.max(items.length * rowH, rowH);
+  const bars = items.map((it, i) => {
+    const y = i * rowH;
+    const bw = it.value ? Math.max(2, (it.value / max) * (width - labelW - 36)) : 0;
+    const color = it.win && it.value > 0 ? '#34d399' : '#6b86ff';
+    return `<g>
+      <title>${rpEsc(it.label)}: ${it.value}</title>
+      <text x="0" y="${y + 16}" fill="#cdd5ff" font-size="11" font-family="Inter, sans-serif">${rpEsc(rpShort(it.label, 12))}</text>
+      <rect x="${labelW}" y="${y + 4}" width="${bw}" height="16" rx="4" fill="${color}"></rect>
+      <text x="${labelW + bw + 6}" y="${y + 16}" fill="#f8fafc" font-size="11" font-family="Inter, sans-serif">${it.value}</text>
+    </g>`;
+  }).join('');
+  return `<svg class="rp-chart" viewBox="0 0 ${width} ${height}" role="img">${bars}</svg>`;
+}
+
+function rpNames(list, labelOf) {
+  if (!list.length) return 'Nenhum';
+  return list.map(labelOf).join(', ');
+}
+
 function rpRenderReport() {
   const root = document.getElementById('rpReport');
   if (!root) return;
   const report = rpBuildReport(rpState.texts);
-  const winSet = new Set(report.winners.map(w => `${w.day}:${w.slot}`));
+  const winPeriods = new Set(report.periodWinners.map(p => p.id));
+  const winSubs = new Set(report.subWinners.map(s => s.name));
 
-  let banner;
-  if (!report.winners.length) {
-    banner = `<div class="result-banner result-wait"><i class="bi bi-bar-chart"></i><div><div class="result-title">Nenhuma faixa com tickets</div><div class="result-sub">Cole o Jira em alguma faixa.</div></div></div>`;
-  } else if (report.winners.length === 1) {
-    const w = report.winners[0];
-    banner = `<div class="result-banner result-ok"><i class="bi bi-trophy"></i><div><div class="result-title">Faixa com mais tickets</div><div class="result-sub">${rpEsc(rpDayById(w.day).name)} ${rpEsc(rpSlotById(w.slot).label)} · ${w.count} ticket${w.count === 1 ? '' : 's'}</div></div></div>`;
-  } else {
-    banner = `<div class="result-banner result-ok"><i class="bi bi-trophy"></i><div><div class="result-title">Faixas empatadas no topo</div><div class="result-sub">${rpEsc(rpWinnerLabel(report.winners))} · ${report.max} tickets cada</div></div></div>`;
-  }
-
-  const head = RP_SLOTS.map(s => `<th>${rpEsc(s.label)}</th>`).join('');
-  const body = RP_DAYS.map(day => {
+  const slotHead = RP_SLOTS.map(s => `<th class="${winPeriods.has(s.id) ? 'rp-win' : ''}">${rpEsc(s.label)}</th>`).join('');
+  const slotBody = RP_DAYS.map(day => {
+    const dayTotal = report.dayTotals.find(d => d.id === day.id).total;
     const cells = RP_SLOTS.map(slot => {
       const box = report.boxes.find(b => b.day === day.id && b.slot === slot.id);
-      const win = winSet.has(`${day.id}:${slot.id}`) ? ' rp-win' : '';
-      const label = box.error ? '—' : String(box.count);
-      return `<td class="num${win}">${rpEsc(label)}</td>`;
+      return `<td class="num${winPeriods.has(slot.id) && box.count ? ' rp-win' : ''}">${box.count}</td>`;
     }).join('');
-    return `<tr><th>${rpEsc(day.name)}</th>${cells}</tr>`;
+    return `<tr><th>${rpEsc(day.short)}</th>${cells}<td class="num">${dayTotal}</td></tr>`;
   }).join('');
+  const slotFoot = RP_SLOTS.map(slot => {
+    const n = report.periodTotals.find(p => p.id === slot.id).total;
+    return `<th class="num${winPeriods.has(slot.id) && n ? ' rp-win' : ''}">${n}</th>`;
+  }).join('');
+  const slotChart = rpBars(RP_DAYS.map(day => {
+    const value = report.dayTotals.find(d => d.id === day.id).total;
+    const maxDay = Math.max(...report.dayTotals.map(d => d.total));
+    return { label: day.short, value, win: value > 0 && value === maxDay };
+  }));
 
-  let subsTable;
-  if (!report.subsidiaries.length) {
-    subsTable = `<p class="muted mb-0">Nenhum COE_subsidiaries ainda.</p>`;
-  } else {
-    const subHead = RP_DAYS.map(d => `<th>${rpEsc(d.name)}</th>`).join('');
-    const subBody = report.subsidiaries.map(rec => {
-      const days = RP_DAYS.map(d => `<td class="num">${rec.days[d.id]}</td>`).join('');
-      return `<tr><th>${rpEsc(rec.name)}</th>${days}<td class="num">${rec.total}</td></tr>`;
-    }).join('');
-    subsTable = `<div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
-      <thead><tr><th>COE_subsidiaries</th>${subHead}<th>Total</th></tr></thead>
-      <tbody>${subBody}</tbody>
-    </table></div>
-    <p class="muted mt-2 mb-0">No dia, a Key conta uma vez. A subsidiary é a da primeira faixa do dia em que a Key apareceu. O total soma os dias.</p>`;
-  }
+  const subHead = RP_DAYS.map(d => `<th>${rpEsc(d.short)}</th>`).join('');
+  const subBody = report.subsidiaries.map(rec => {
+    const days = RP_DAYS.map(d => `<td class="num">${rec.days[d.id]}</td>`).join('');
+    const win = winSubs.has(rec.name) ? ' rp-win' : '';
+    return `<tr><th class="${win}">${rpEsc(rec.name)}</th>${days}<td class="num${win}">${rec.total}</td></tr>`;
+  }).join('');
+  const subDayFoot = RP_DAYS.map(day => `<th class="num">${report.dayTotals.find(d => d.id === day.id).total}</th>`).join('');
+  const subTable = report.subsidiaries.length
+    ? `<table class="table table-sm table-dark table-bordered mb-0 rp-table">
+        <thead><tr><th>COE</th>${subHead}<th>Total</th></tr></thead>
+        <tbody>${subBody}</tbody>
+        <tfoot><tr><th>Total</th>${subDayFoot}<th class="num">${report.total}</th></tr></tfoot>
+      </table>`
+    : `<p class="muted mb-0">Nenhum COE_subsidiaries ainda.</p>`;
+  const subChart = rpBars((report.subsidiaries.length ? report.subsidiaries : [{ name: '—', total: 0 }]).map(rec => ({
+    label: rec.name,
+    value: rec.total,
+    win: winSubs.has(rec.name)
+  })));
 
+  const periodLabel = rpNames(report.periodWinners, p => `${rpSlotById(p.id).label} (${p.total})`);
+  const subLabel = rpNames(report.subWinners, s => `${s.name} (${s.total})`);
+  const weekChart = rpBars(RP_SLOTS.map(slot => {
+    const value = report.periodTotals.find(p => p.id === slot.id).total;
+    return { label: slot.label, value, win: winPeriods.has(slot.id) && value > 0 };
+  }));
   const saveNote = rpState.saveError ? `<p class="muted">${rpEsc(rpState.saveError)}</p>` : '';
 
   root.innerHTML = `
-    ${banner}
     ${saveNote}
+    <div class="section-card">
+      <div class="section-title">
+        <i class="bi bi-calendar-week text-accent fs-4"></i>
+        <h4 class="m-0">Semana</h4>
+      </div>
+      <div class="rp-stats">
+        <div class="rp-stat"><span>Total de tickets</span><strong>${report.total}</strong></div>
+        <div class="rp-stat"><span>Média por dia</span><strong>${rpFmt(report.averagePerDay)}</strong><em>total ÷ 7</em></div>
+        <div class="rp-stat"><span>Média por período</span><strong>${rpFmt(report.averagePerPeriod)}</strong><em>total ÷ 4</em></div>
+        <div class="rp-stat"><span>Período com mais tickets</span><strong>${rpEsc(periodLabel)}</strong><em>Sub que mais demandou: ${rpEsc(subLabel)}</em></div>
+      </div>
+      <div class="rp-pair">
+        <div class="rp-pane"><div class="rp-chart-wrap">${weekChart}</div></div>
+        <div class="rp-pane"><div class="rp-chart-wrap">${subChart}</div></div>
+      </div>
+    </div>
     <div class="section-card">
       <div class="section-title">
         <i class="bi bi-clock text-accent fs-4"></i>
         <h4 class="m-0">Tickets triados por faixa</h4>
       </div>
-      <p class="muted mb-3">Cada número é a quantidade de Keys únicas daquela caixa. A marca verde é a faixa com mais tickets.</p>
-      <div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
-        <thead><tr><th>Dia</th>${head}</tr></thead>
-        <tbody>${body}</tbody>
-      </table></div>
+      <p class="muted mb-3">Total: ${report.total} ticket${report.total === 1 ? '' : 's'}. A marca verde é o período com mais tickets na semana.</p>
+      <div class="rp-pair">
+        <div class="rp-pane"><div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
+          <thead><tr><th>Dia</th>${slotHead}<th>Total</th></tr></thead>
+          <tbody>${slotBody}</tbody>
+          <tfoot><tr><th>Total</th>${slotFoot}<th class="num">${report.total}</th></tr></tfoot>
+        </table></div></div>
+        <div class="rp-pane"><div class="rp-chart-wrap">${slotChart}</div></div>
+      </div>
     </div>
     <div class="section-card">
       <div class="section-title">
         <i class="bi bi-diagram-3 text-accent fs-4"></i>
         <h4 class="m-0">COE_subsidiaries por dia</h4>
       </div>
-      ${subsTable}
+      <p class="muted mb-3">Total: ${report.total} ticket${report.total === 1 ? '' : 's'}. O mesmo total da tabela de faixas.</p>
+      <div class="rp-pair">
+        <div class="rp-pane"><div class="table-wrap">${subTable}</div></div>
+        <div class="rp-pane"><div class="rp-chart-wrap">${subChart}</div></div>
+      </div>
     </div>`;
 }
 
