@@ -424,3 +424,20 @@ h1 {
 .overall-fail { border-left-color: var(--accent-danger); }
 .overall-fail > i { color: var(--accent-danger); }
 .overall-wait > i { color: var(--text-muted); }
+
+/* Reports */
+.rp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.rp-slot-label { font-weight: 700; margin-bottom: 6px; }
+.rp-slot textarea { min-height: 120px; }
+.rp-slot-meta { min-height: 1.2em; font-size: .82rem; margin-top: 6px; }
+.rp-slot-meta.ok { color: #6ee7b7; }
+.rp-slot-meta.bad { color: #fca5a5; }
+.rp-slot-meta.warn { color: #fbbf24; }
+.table-wrap td.rp-win, .table-wrap th.rp-win {
+  background: rgba(52, 211, 153, .18);
+  color: #6ee7b7;
+  font-weight: 800;
+}
+@media (max-width: 900px) {
+  .rp-grid { grid-template-columns: 1fr; }
+}

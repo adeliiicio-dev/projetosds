@@ -6,7 +6,7 @@
   <title>SDS - Conferência de Planilhas</title>
   <link rel="stylesheet" href="vendor/bootstrap.min.css?v=2" />
   <link rel="stylesheet" href="vendor/bootstrap-icons.css?v=2" />
-  <link rel="stylesheet" href="styles.css?v=4" />
+  <link rel="stylesheet" href="styles.css?v=5" />
 </head>
 <body>
   <div class="wrapper">
@@ -21,6 +21,9 @@
       </button>
       <button class="side-button" data-screen="prioridades" onclick="showScreen('prioridades')">
         <i class="bi bi-list-ol"></i> Lista de prioridades
+      </button>
+      <button class="side-button" data-screen="reports" onclick="showScreen('reports')">
+        <i class="bi bi-bar-chart"></i> Reports
       </button>
           <button class="side-button" data-screen="minimum-prices" onclick="showScreen('minimum-prices')">
         <i class="bi bi-currency-dollar"></i> Minimum prices
@@ -349,6 +352,29 @@
         </div>
       </section>
 
+      <!-- Reports -->
+      <section id="screen-reports" class="screen">
+        <h1>Reports</h1>
+        <p class="subtitle">Relatório semanal. Cada dia tem quatro colagens do Jira. A faixa é a caixa. Key repetida na mesma caixa conta uma vez. A mesma Key em duas faixas conta nas duas e uma vez no dia, na subsidiary.</p>
+
+        <div class="country-tabs" id="rpDays"></div>
+
+        <div class="section-card">
+          <div class="section-title">
+            <i class="bi bi-clipboard-data text-accent fs-4"></i>
+            <h4 class="m-0" id="rpDayTitle">Segunda</h4>
+          </div>
+          <p class="muted mb-3">Cole a lista do Jira com o cabeçalho. Colunas: Issue Type, Key, Summary, Status, Created, Updated, Reporter, Assignee, Time to SLA-ES1, COE_subsidiaries.</p>
+          <div class="rp-grid" id="rpSlots"></div>
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <button type="button" class="btn btn-outline-secondary" id="rpClearDay"><i class="bi bi-x-circle"></i> Limpar este dia</button>
+            <button type="button" class="btn btn-outline-danger" id="rpClearWeek"><i class="bi bi-trash"></i> Limpar a semana</button>
+          </div>
+        </div>
+
+        <div id="rpReport"></div>
+      </section>
+
     </main>
   </div>
 
@@ -357,9 +383,10 @@
   <script src="pumi.js?v=2"></script>
   <script src="minprices.js?v=4"></script>
   <script src="specialprice.js?v=8"></script>
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
   <script src="voucher.js?v=8"></script>
   <script src="knox.js?v=3"></script>
   <script src="prioridades.js?v=10"></script>
+  <script src="reports.js?v=1"></script>
 </body>
 </html>

@@ -25,6 +25,7 @@ function showScreen(name, menuItem) {
   if (name === 'voucher' && typeof vcRefresh === 'function') vcRefresh();
   if (name === 'prioridades' && typeof prRefresh === 'function') prRefresh();
   if (name === 'knox' && typeof knoxRefresh === 'function') knoxRefresh();
+  if (name === 'reports' && typeof rpRefresh === 'function') rpRefresh();
 
   const active = menuItem || name;
   document.querySelectorAll('.side-button').forEach(b => {
