@@ -358,7 +358,7 @@ function rpBars(items) {
   const bars = items.map((it, i) => {
     const y = i * rowH;
     const bw = it.value ? Math.max(2, (it.value / max) * (width - labelW - 36)) : 0;
-    const color = it.win && it.value > 0 ? '#34d399' : '#6b86ff';
+    const color = it.win && it.value > 0 ? '#f87171' : '#6b86ff';
     return `<g>
       <title>${rpEsc(it.label)}: ${it.value}</title>
       <text x="0" y="${y + 16}" fill="#cdd5ff" font-size="11" font-family="Inter, sans-serif">${rpEsc(rpShort(it.label, 12))}</text>
@@ -374,25 +374,40 @@ function rpNames(list, labelOf) {
   return list.map(labelOf).join(', ');
 }
 
+function rpDayPeaks(report) {
+  const peaks = {};
+  RP_DAYS.forEach(day => {
+    const counts = RP_SLOTS.map(slot => ({
+      id: slot.id,
+      count: report.boxes.find(b => b.day === day.id && b.slot === slot.id).count
+    }));
+    const max = counts.reduce((m, c) => Math.max(m, c.count), 0);
+    peaks[day.id] = max > 0 ? counts.filter(c => c.count === max).map(c => c.id) : [];
+  });
+  return peaks;
+}
+
 function rpRenderReport() {
   const root = document.getElementById('rpReport');
   if (!root) return;
   const report = rpBuildReport(rpState.texts);
+  const dayPeaks = rpDayPeaks(report);
   const winPeriods = new Set(report.periodWinners.map(p => p.id));
   const winSubs = new Set(report.subWinners.map(s => s.name));
 
-  const slotHead = RP_SLOTS.map(s => `<th class="${winPeriods.has(s.id) ? 'rp-win' : ''}">${rpEsc(s.label)}</th>`).join('');
+  const slotHead = RP_SLOTS.map(s => `<th>${rpEsc(s.label)}</th>`).join('');
   const slotBody = RP_DAYS.map(day => {
     const dayTotal = report.dayTotals.find(d => d.id === day.id).total;
+    const peaks = new Set(dayPeaks[day.id]);
     const cells = RP_SLOTS.map(slot => {
       const box = report.boxes.find(b => b.day === day.id && b.slot === slot.id);
-      return `<td class="num${winPeriods.has(slot.id) && box.count ? ' rp-win' : ''}">${box.count}</td>`;
+      return `<td class="num${peaks.has(slot.id) ? ' rp-win' : ''}">${box.count}</td>`;
     }).join('');
     return `<tr><th>${rpEsc(day.short)}</th>${cells}<td class="num">${dayTotal}</td></tr>`;
   }).join('');
   const slotFoot = RP_SLOTS.map(slot => {
     const n = report.periodTotals.find(p => p.id === slot.id).total;
-    return `<th class="num${winPeriods.has(slot.id) && n ? ' rp-win' : ''}">${n}</th>`;
+    return `<th class="num">${n}</th>`;
   }).join('');
   const slotChart = rpBars(RP_DAYS.map(day => {
     const value = report.dayTotals.find(d => d.id === day.id).total;
@@ -451,7 +466,7 @@ function rpRenderReport() {
         <i class="bi bi-clock text-accent fs-4"></i>
         <h4 class="m-0">Tickets triados por faixa</h4>
       </div>
-      <p class="muted mb-3">Total: ${report.total} ticket${report.total === 1 ? '' : 's'}. A marca verde é o período com mais tickets na semana.</p>
+      <p class="muted mb-3">Total: ${report.total} ticket${report.total === 1 ? '' : 's'}. A marca vermelha é a faixa com mais tickets naquele dia.</p>
       <div class="rp-pair">
         <div class="rp-pane"><div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
           <thead><tr><th>Dia</th>${slotHead}<th>Total</th></tr></thead>
@@ -539,5 +554,5 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { rpParseBox, rpBuildReport, rpBlankTexts, RP_DAYS, RP_SLOTS };
+  module.exports = { rpParseBox, rpBuildReport, rpBlankTexts, rpDayPeaks, RP_DAYS, RP_SLOTS };
 }
