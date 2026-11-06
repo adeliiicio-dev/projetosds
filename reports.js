@@ -431,13 +431,20 @@ function rpNiceMax(max) {
   return step * pow;
 }
 
-function rpMatrixChart(days, report) {
+function rpSubSlotMatrix(report) {
+  return report.subsidiaries.map(rec => {
+    const slots = RP_SLOTS.map(slot => report.boxes
+      .filter(box => box.slot === slot.id)
+      .reduce((sum, box) => sum + box.rows.filter(row => row.subsidiary === rec.name).length, 0));
+    return { name: rec.name, slots, total: slots.reduce((sum, n) => sum + n, 0) };
+  });
+}
+
+function rpMatrixChart(groups, title) {
   const colors = ['#6b86ff', '#38bdf8', '#fbbf24', '#f87171'];
-  const series = days.map(day => RP_SLOTS.map(slot => (
-    report.boxes.find(b => b.day === day.id && b.slot === slot.id).count
-  )));
-  const max = rpNiceMax(Math.max(1, ...series.flat()));
-  const n = Math.max(days.length, 1);
+  const series = groups.map(group => group.values);
+  const max = rpNiceMax(Math.max(1, ...series.flat(), 0));
+  const n = Math.max(groups.length, 1);
   const width = 560;
   const height = 248;
   const padL = 34;
@@ -458,20 +465,20 @@ function rpMatrixChart(days, report) {
     return `<line x1="${padL}" y1="${y}" x2="${width - padR}" y2="${y}" stroke="#26327a" stroke-width="1"></line>
       <text x="${padL - 6}" y="${y + 4}" fill="#9aa6d6" font-size="10" text-anchor="end" font-family="Inter, sans-serif">${label}</text>`;
   }).join('');
-  const groups = days.map((day, i) => {
+  const drawn = groups.map((group, i) => {
     const x0 = padL + i * groupW + (groupW - inner) / 2;
     const bars = RP_SLOTS.map((slot, s) => {
-      const value = series[i][s];
+      const value = series[i][s] || 0;
       const h = (value / max) * plotH;
       const x = x0 + s * barW + 1;
       const y = baseY - h;
       return `<g>
-        <title>${rpEsc(day.short)} ${rpEsc(slot.label)}: ${value}</title>
+        <title>${rpEsc(group.label)} ${rpEsc(slot.label)}: ${value}</title>
         <rect x="${x}" y="${y}" width="${Math.max(barW - 2, 1)}" height="${h}" rx="2" fill="${colors[s]}"></rect>
       </g>`;
     }).join('');
     const labelX = padL + i * groupW + groupW / 2;
-    return `${bars}<text x="${labelX}" y="${baseY + 16}" fill="#cdd5ff" font-size="11" text-anchor="middle" font-family="Inter, sans-serif">${rpEsc(day.short)}</text>`;
+    return `${bars}<text x="${labelX}" y="${baseY + 16}" fill="#cdd5ff" font-size="11" text-anchor="middle" font-family="Inter, sans-serif">${rpEsc(rpShort(group.label, 12))}</text>`;
   }).join('');
   const legendW = 124;
   const legend = RP_SLOTS.map((slot, s) => {
@@ -481,11 +488,11 @@ function rpMatrixChart(days, report) {
       <text x="${x + 14}" y="${y}" fill="#cdd5ff" font-size="11" font-family="Inter, sans-serif">${rpEsc(slot.label)}</text>`;
   }).join('');
   return `<svg class="rp-chart rp-chart-matrix" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMinYMin meet" role="img">
-    <title>Tickets por dia e faixa</title>
+    <title>${rpEsc(title || 'Tickets por faixa')}</title>
     ${grid}
     <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${baseY}" stroke="#9aa6d6" stroke-width="1"></line>
     <line x1="${padL}" y1="${baseY}" x2="${width - padR}" y2="${baseY}" stroke="#9aa6d6" stroke-width="1"></line>
-    ${groups}
+    ${drawn}
     ${legend}
   </svg>`;
 }
@@ -539,7 +546,10 @@ function rpRenderReport() {
     return `<tr><th>${rpEsc(day.short)}</th>${cells}<td class="num">${dayTotal}</td></tr>`;
   }).join('');
   const slotFoot = faixaPeriods.map(p => `<th class="num">${p.total}</th>`).join('');
-  const slotChart = rpMatrixChart(faixaDays, report);
+  const slotChart = rpMatrixChart(faixaDays.map(day => ({
+    label: day.short,
+    values: RP_SLOTS.map(slot => report.boxes.find(b => b.day === day.id && b.slot === slot.id).count)
+  })), 'Tickets por dia e faixa');
 
   const subHead = RP_DAYS.map(d => `<th>${rpEsc(d.short)}</th>`).join('');
   const subDayPeaks = rpSubDayPeaks(report);
@@ -571,6 +581,27 @@ function rpRenderReport() {
     const value = report.periodTotals.find(p => p.id === slot.id).total;
     return { label: slot.label, value, win: winPeriods.has(slot.id) && value > 0 };
   }));
+  const subSlots = rpSubSlotMatrix(report);
+  const subSlotHead = RP_SLOTS.map(slot => `<th>${rpEsc(slot.label)}</th>`).join('');
+  const subSlotBody = subSlots.map(rec => {
+    const cells = rec.slots.map(n => `<td class="num">${n}</td>`).join('');
+    return `<tr><th>${rpEsc(rec.name)}</th>${cells}<td class="num">${rec.total}</td></tr>`;
+  }).join('');
+  const subSlotFoot = RP_SLOTS.map(slot => {
+    const total = subSlots.reduce((sum, rec) => sum + rec.slots[RP_SLOTS.findIndex(s => s.id === slot.id)], 0);
+    return `<th class="num">${total}</th>`;
+  }).join('');
+  const subSlotTable = subSlots.length
+    ? `<table class="table table-sm table-dark table-bordered mb-0 rp-table">
+        <thead><tr><th>COE</th>${subSlotHead}<th>Total</th></tr></thead>
+        <tbody>${subSlotBody}</tbody>
+        <tfoot><tr><th>Total</th>${subSlotFoot}<th class="num">${report.total}</th></tr></tfoot>
+      </table>`
+    : `<p class="muted mb-0">Nenhum COE_subsidiaries ainda.</p>`;
+  const subSlotChart = rpMatrixChart((subSlots.length ? subSlots : [{ name: '—', slots: [0, 0, 0, 0] }]).map(rec => ({
+    label: rec.name,
+    values: rec.slots
+  })), 'Tickets por subsidiary e faixa');
   const saveNote = rpState.saveError ? `<p class="muted">${rpEsc(rpState.saveError)}</p>` : '';
 
   root.innerHTML = `
@@ -588,6 +619,10 @@ function rpRenderReport() {
       <div class="rp-pair">
         <div class="rp-pane"><div class="rp-chart-wrap">${weekChart}</div></div>
         <div class="rp-pane"><div class="rp-chart-wrap">${weekCountryChart}</div></div>
+      </div>
+      <div class="rp-pair rp-week-extra">
+        <div class="rp-pane"><div class="table-wrap rp-fit">${subSlotTable}</div></div>
+        <div class="rp-pane"><div class="rp-chart-wrap">${subSlotChart}</div></div>
       </div>
     </div>
     <div class="section-card">
@@ -695,7 +730,7 @@ if (typeof document !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     rpParseBox, rpBuildReport, rpBlankTexts, rpDayPeaks, rpSubDayPeaks,
-    rpCoveredRange, rpWeekCountryBars, rpFmtDate,
+    rpCoveredRange, rpWeekCountryBars, rpSubSlotMatrix, rpFmtDate,
     RP_DAYS, RP_SLOTS, RP_WEEKEND
   };
 }

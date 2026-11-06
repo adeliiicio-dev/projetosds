@@ -439,6 +439,7 @@ h1 {
   font-weight: 800;
 }
 .rp-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.rp-week-extra { margin-top: 14px; }
 .rp-pane { min-width: 0; background: rgba(11, 18, 51, .45); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; }
 .rp-pane .table-wrap { max-height: 280px; }
 .rp-chart-wrap { max-height: 280px; overflow: auto; flex: 1; }
