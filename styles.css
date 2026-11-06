@@ -446,7 +446,9 @@ h1 {
 .rp-table { font-size: .75rem; }
 .rp-table th, .rp-table td { padding: 3px 6px !important; }
 .rp-chart { width: 100%; height: auto; display: block; }
-.rp-covered { display: none; }
+.rp-chart-wrap:has(.rp-chart-matrix) { max-height: none; overflow: visible; }
+.rp-chart-matrix { max-height: 260px; }
+.rp-covered { margin-left: auto; color: #9aa6d6; font-weight: 600; }
 .rp-chart-left { display: flex; justify-content: flex-start; align-items: flex-start; }
 .rp-chart-left .rp-chart { width: auto; max-width: 100%; margin-left: 0; margin-right: auto; }
 .rp-check { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text-main); font-size: .85rem; font-weight: 600; }
@@ -456,7 +458,7 @@ h1 {
 .rp-stat { background: rgba(11, 18, 51, .45); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 12px; }
 .rp-stat span { display: block; color: var(--text-muted); font-size: .75rem; }
 .rp-stat strong { display: block; font-size: 1.15rem; margin-top: 2px; }
-.rp-stat em { font-style: normal; color: #9aa6d6; font-size: .78rem; }
+.rp-stat em { display: block; margin-top: 6px; font-style: normal; color: #9aa6d6; font-size: .78rem; line-height: 1.35; }
 @media (max-width: 900px) {
   .rp-grid, .rp-pair, .rp-stats, .rp-stats-2 { grid-template-columns: 1fr; }
 }
@@ -486,6 +488,7 @@ h1 {
   .rp-win, td.rp-win, th.rp-win { background: rgba(248, 113, 113, .22) !important; color: #fca5a5 !important; }
   .rp-table td.num, .rp-table th.num, .table-wrap td.num, .table-wrap th.num { text-align: right !important; }
   .rp-chart { width: 100% !important; max-width: 100% !important; height: auto !important; max-height: 150px !important; }
+  .rp-chart-matrix { max-height: 210px !important; }
   .rp-chart-left .rp-chart { width: auto !important; margin-left: 0 !important; margin-right: auto !important; }
   .rp-coe { break-before: page; page-break-before: always; }
   .rp-coe .rp-pair { display: block !important; }
@@ -493,4 +496,5 @@ h1 {
   h1 { font-size: 18pt !important; margin: 0 0 8px !important; }
   .section-title { width: 100%; }
   .rp-covered { display: block; margin-left: auto; color: #9aa6d6 !important; font-weight: 600; }
+  .rp-stat em { color: #9aa6d6 !important; }
 }
