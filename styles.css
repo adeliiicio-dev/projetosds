@@ -483,6 +483,7 @@ h1 {
     --bs-table-bg: #0b1233; --bs-table-color: #f8fafc; --bs-table-border-color: #26327a;
   }
   .rp-win, td.rp-win, th.rp-win { background: rgba(248, 113, 113, .22) !important; color: #fca5a5 !important; }
+  .rp-table td.num, .rp-table th.num, .table-wrap td.num, .table-wrap th.num { text-align: right !important; }
   .rp-chart { width: 100% !important; max-width: 100% !important; height: auto !important; max-height: 150px !important; }
   .rp-chart-left .rp-chart { width: auto !important; margin-left: 0 !important; margin-right: auto !important; }
   .rp-coe { break-before: page; page-break-before: always; }
