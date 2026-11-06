@@ -441,11 +441,11 @@ h1 {
 .rp-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: stretch; }
 .rp-pane { min-width: 0; background: rgba(11, 18, 51, .45); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; }
 .rp-pane .table-wrap { max-height: 280px; }
-.rp-chart-wrap { overflow: visible; flex: 1; }
+.rp-chart-wrap { max-height: 280px; overflow: auto; flex: 1; }
 .rp-fit { max-height: none !important; overflow: visible !important; }
 .rp-table { font-size: .75rem; }
 .rp-table th, .rp-table td { padding: 3px 6px !important; }
-.rp-chart { width: 100%; display: block; }
+.rp-chart { width: 100%; height: auto; display: block; }
 .rp-check { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text-main); font-size: .85rem; font-weight: 600; }
 .rp-check input { width: 16px; height: 16px; accent-color: var(--accent-danger); }
 .rp-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }

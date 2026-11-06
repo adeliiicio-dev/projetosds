@@ -368,7 +368,7 @@ function rpBars(items) {
       <text x="${labelW + bw + 6}" y="${y + 16}" fill="#f8fafc" font-size="11" font-family="Inter, sans-serif">${it.value}</text>
     </g>`;
   }).join('');
-  return `<svg class="rp-chart" viewBox="0 0 ${width} ${height}" style="height:${height}px" preserveAspectRatio="xMinYMin meet" role="img">${bars}</svg>`;
+  return `<svg class="rp-chart" viewBox="0 0 ${width} ${height}" role="img">${bars}</svg>`;
 }
 
 function rpNames(list, labelOf) {
@@ -478,7 +478,7 @@ function rpRenderReport() {
           <tbody>${slotBody}</tbody>
           <tfoot><tr><th>Total</th>${slotFoot}<th class="num">${faixaTotal}</th></tr></tfoot>
         </table></div></div>
-        <div class="rp-pane"><div class="rp-chart-wrap rp-fit">${slotChart}</div></div>
+        <div class="rp-pane"><div class="rp-chart-wrap">${slotChart}</div></div>
       </div>
     </div>
     <div class="section-card">
