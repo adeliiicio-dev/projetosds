@@ -368,7 +368,7 @@ function rpBars(items) {
       <text x="${labelW + bw + 6}" y="${y + 16}" fill="#f8fafc" font-size="11" font-family="Inter, sans-serif">${it.value}</text>
     </g>`;
   }).join('');
-  return `<svg class="rp-chart" viewBox="0 0 ${width} ${height}" role="img">${bars}</svg>`;
+  return `<svg class="rp-chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMinYMin meet" role="img">${bars}</svg>`;
 }
 
 function rpNames(list, labelOf) {
@@ -489,7 +489,7 @@ function rpRenderReport() {
       <p class="muted mb-3">Total: ${report.total} ticket${report.total === 1 ? '' : 's'}. O mesmo total da tabela de faixas.</p>
       <div class="rp-pair">
         <div class="rp-pane"><div class="table-wrap">${subTable}</div></div>
-        <div class="rp-pane"><div class="rp-chart-wrap">${subChart}</div></div>
+        <div class="rp-pane"><div class="rp-chart-wrap rp-chart-left">${subChart}</div></div>
       </div>
     </div>`;
 }

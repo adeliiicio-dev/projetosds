@@ -446,6 +446,8 @@ h1 {
 .rp-table { font-size: .75rem; }
 .rp-table th, .rp-table td { padding: 3px 6px !important; }
 .rp-chart { width: 100%; height: auto; display: block; }
+.rp-chart-left { display: flex; justify-content: flex-start; align-items: flex-start; }
+.rp-chart-left .rp-chart { width: auto; max-width: 100%; margin-left: 0; margin-right: auto; }
 .rp-check { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text-main); font-size: .85rem; font-weight: 600; }
 .rp-check input { width: 16px; height: 16px; accent-color: var(--accent-danger); }
 .rp-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
@@ -460,29 +462,31 @@ h1 {
 @media print {
   @page { size: A4; margin: 12mm; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  html, body { width: auto !important; overflow: visible !important; background: #fff !important; color: #111 !important; }
+  html, body, .content-area { width: auto !important; overflow: visible !important; background: #080d22 !important; color: #f8fafc !important; }
   .wrapper { display: block !important; }
   .sidebar, .no-print, #rpDays, #screen-reports > .section-card, .subtitle { display: none !important; }
-  .content-area { margin: 0 !important; padding: 0 !important; width: auto !important; max-width: 100% !important; min-width: 0 !important; }
+  .content-area { margin: 0 !important; padding: 0 !important; max-width: 100% !important; min-width: 0 !important; }
   .screen { display: none !important; }
   #screen-reports { display: block !important; }
   #screen-reports, .section-card, .rp-pane, .rp-stat, .rp-pair { max-width: 100% !important; min-width: 0 !important; }
-  .section-card { padding: 0 0 10px !important; margin: 0 0 8px !important; border: none !important; box-shadow: none !important; background: #fff !important; }
+  .section-card { padding: 12px !important; margin: 0 0 8px !important; box-shadow: none !important; background: #111a42 !important; color: #f8fafc !important; border: 1px solid #26327a !important; }
+  .rp-pane, .rp-stat { background: rgba(11, 18, 51, .45) !important; color: #f8fafc !important; }
+  .muted, .rp-stat span { color: #9aa6d6 !important; }
   .rp-pair, .rp-stats-2 { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; width: 100% !important; }
   .rp-pane, .table-wrap, .rp-chart-wrap, .rp-fit { overflow: visible !important; max-height: none !important; min-width: 0 !important; max-width: 100% !important; }
-  .table-wrap thead th { position: static !important; }
+  .table-wrap thead th { position: static !important; background: #1428a0 !important; color: #fff !important; }
   .table-wrap table, .rp-table { width: 100% !important; max-width: 100% !important; table-layout: fixed !important; }
   .table, .table th, .table td, .table-dark, .rp-table th, .rp-table td, .table-wrap th, .table-wrap td {
-    background: #fff !important; color: #111 !important; white-space: normal !important;
+    background: #0b1233 !important; color: #f8fafc !important; white-space: normal !important;
     word-break: break-word !important; overflow-wrap: break-word !important; max-width: none !important;
     font-size: 8pt !important; padding: 2px 2px !important;
-    --bs-table-bg: #fff; --bs-table-color: #111; --bs-table-border-color: #bbb;
+    --bs-table-bg: #0b1233; --bs-table-color: #f8fafc; --bs-table-border-color: #26327a;
   }
-  .rp-win, td.rp-win, th.rp-win { background: #fecaca !important; color: #991b1b !important; }
+  .rp-win, td.rp-win, th.rp-win { background: rgba(248, 113, 113, .22) !important; color: #fca5a5 !important; }
   .rp-chart { width: 100% !important; max-width: 100% !important; height: auto !important; max-height: 150px !important; }
-  .rp-chart text { fill: #111 !important; }
+  .rp-chart-left .rp-chart { width: auto !important; margin-left: 0 !important; margin-right: auto !important; }
   .rp-coe { break-before: page; page-break-before: always; }
   .rp-coe .rp-pair { display: block !important; }
   .rp-coe .rp-pane + .rp-pane { margin-top: 8px !important; }
-  h1 { font-size: 18pt !important; margin: 0 0 8px !important; -webkit-text-fill-color: #111; color: #111; background: none; }
+  h1 { font-size: 18pt !important; margin: 0 0 8px !important; }
 }
