@@ -22,9 +22,12 @@ const RP_SLOTS = [
   { id: 'h21', label: '21h–22h' }
 ];
 
+const RP_WEEKEND = new Set(['sab', 'dom']);
+
 const rpState = {
   day: 'seg',
-  texts: {}
+  texts: {},
+  hideWeekend: false
 };
 
 function rpBlankTexts() {
@@ -186,12 +189,6 @@ function rpParseBox(text) {
   return { rows, count: rows.length, error: '', warning };
 }
 
-function rpFmt(n) {
-  const rounded = Math.round(n * 10) / 10;
-  const [whole, frac] = rounded.toFixed(1).split('.');
-  return frac === '0' ? whole : `${whole},${frac}`;
-}
-
 function rpShort(text, max) {
   const t = String(text || '');
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
@@ -275,7 +272,11 @@ function rpLoad() {
 function rpSave() {
   try {
     if (typeof localStorage === 'undefined') return;
-    localStorage.setItem(RP_STORAGE_KEY, JSON.stringify({ day: rpState.day, texts: rpState.texts }));
+    localStorage.setItem(RP_STORAGE_KEY, JSON.stringify({
+      day: rpState.day,
+      texts: rpState.texts,
+      hideWeekend: rpState.hideWeekend
+    }));
     rpState.saveError = '';
   } catch {
     rpState.saveError = 'Não coube no navegador. O relatório desta aba continua valendo.';
@@ -287,6 +288,7 @@ function rpHydrate() {
   const saved = rpLoad();
   if (!saved) return;
   if (RP_DAYS.some(d => d.id === saved.day)) rpState.day = saved.day;
+  rpState.hideWeekend = saved.hideWeekend === true;
   RP_DAYS.forEach(d => {
     RP_SLOTS.forEach(s => {
       const value = saved.texts?.[d.id]?.[s.id];
@@ -366,7 +368,7 @@ function rpBars(items) {
       <text x="${labelW + bw + 6}" y="${y + 16}" fill="#f8fafc" font-size="11" font-family="Inter, sans-serif">${it.value}</text>
     </g>`;
   }).join('');
-  return `<svg class="rp-chart" viewBox="0 0 ${width} ${height}" role="img">${bars}</svg>`;
+  return `<svg class="rp-chart" viewBox="0 0 ${width} ${height}" style="height:${height}px" preserveAspectRatio="xMinYMin meet" role="img">${bars}</svg>`;
 }
 
 function rpNames(list, labelOf) {
@@ -395,8 +397,14 @@ function rpRenderReport() {
   const winPeriods = new Set(report.periodWinners.map(p => p.id));
   const winSubs = new Set(report.subWinners.map(s => s.name));
 
+  const faixaDays = rpState.hideWeekend ? RP_DAYS.filter(d => !RP_WEEKEND.has(d.id)) : RP_DAYS;
+  const faixaTotal = faixaDays.reduce((sum, day) => sum + report.dayTotals.find(d => d.id === day.id).total, 0);
+  const faixaPeriods = RP_SLOTS.map(slot => ({
+    id: slot.id,
+    total: faixaDays.reduce((sum, day) => sum + report.boxes.find(b => b.day === day.id && b.slot === slot.id).count, 0)
+  }));
   const slotHead = RP_SLOTS.map(s => `<th>${rpEsc(s.label)}</th>`).join('');
-  const slotBody = RP_DAYS.map(day => {
+  const slotBody = faixaDays.map(day => {
     const dayTotal = report.dayTotals.find(d => d.id === day.id).total;
     const peaks = new Set(dayPeaks[day.id]);
     const cells = RP_SLOTS.map(slot => {
@@ -405,14 +413,11 @@ function rpRenderReport() {
     }).join('');
     return `<tr><th>${rpEsc(day.short)}</th>${cells}<td class="num">${dayTotal}</td></tr>`;
   }).join('');
-  const slotFoot = RP_SLOTS.map(slot => {
-    const n = report.periodTotals.find(p => p.id === slot.id).total;
-    return `<th class="num">${n}</th>`;
-  }).join('');
-  const slotChart = rpBars(RP_DAYS.map(day => {
+  const slotFoot = faixaPeriods.map(p => `<th class="num">${p.total}</th>`).join('');
+  const maxFaixaDay = Math.max(0, ...faixaDays.map(day => report.dayTotals.find(d => d.id === day.id).total));
+  const slotChart = rpBars(faixaDays.map(day => {
     const value = report.dayTotals.find(d => d.id === day.id).total;
-    const maxDay = Math.max(...report.dayTotals.map(d => d.total));
-    return { label: day.short, value, win: value > 0 && value === maxDay };
+    return { label: day.short, value, win: value > 0 && value === maxFaixaDay };
   }));
 
   const subHead = RP_DAYS.map(d => `<th>${rpEsc(d.short)}</th>`).join('');
@@ -436,7 +441,6 @@ function rpRenderReport() {
   })));
 
   const periodLabel = rpNames(report.periodWinners, p => `${rpSlotById(p.id).label} (${p.total})`);
-  const subLabel = rpNames(report.subWinners, s => `${s.name} (${s.total})`);
   const weekChart = rpBars(RP_SLOTS.map(slot => {
     const value = report.periodTotals.find(p => p.id === slot.id).total;
     return { label: slot.label, value, win: winPeriods.has(slot.id) && value > 0 };
@@ -450,11 +454,9 @@ function rpRenderReport() {
         <i class="bi bi-calendar-week text-accent fs-4"></i>
         <h4 class="m-0">Semana</h4>
       </div>
-      <div class="rp-stats">
+      <div class="rp-stats rp-stats-2">
         <div class="rp-stat"><span>Total de tickets</span><strong>${report.total}</strong></div>
-        <div class="rp-stat"><span>Média por dia</span><strong>${rpFmt(report.averagePerDay)}</strong><em>total ÷ 7</em></div>
-        <div class="rp-stat"><span>Média por período</span><strong>${rpFmt(report.averagePerPeriod)}</strong><em>total ÷ 4</em></div>
-        <div class="rp-stat"><span>Período com mais tickets</span><strong>${rpEsc(periodLabel)}</strong><em>Sub que mais demandou: ${rpEsc(subLabel)}</em></div>
+        <div class="rp-stat"><span>Período com mais tickets</span><strong>${rpEsc(periodLabel)}</strong></div>
       </div>
       <div class="rp-pair">
         <div class="rp-pane"><div class="rp-chart-wrap">${weekChart}</div></div>
@@ -466,14 +468,17 @@ function rpRenderReport() {
         <i class="bi bi-clock text-accent fs-4"></i>
         <h4 class="m-0">Tickets triados por faixa</h4>
       </div>
-      <p class="muted mb-3">Total: ${report.total} ticket${report.total === 1 ? '' : 's'}. A marca vermelha é a faixa com mais tickets naquele dia.</p>
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <p class="muted mb-0">Total: ${faixaTotal} ticket${faixaTotal === 1 ? '' : 's'}. A marca vermelha é a faixa com mais tickets naquele dia.</p>
+        <label class="rp-check no-print"><input type="checkbox" id="rpHideWeekend"${rpState.hideWeekend ? ' checked' : ''}> Ocultar fim de semana</label>
+      </div>
       <div class="rp-pair">
-        <div class="rp-pane"><div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
+        <div class="rp-pane"><div class="table-wrap rp-fit"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
           <thead><tr><th>Dia</th>${slotHead}<th>Total</th></tr></thead>
           <tbody>${slotBody}</tbody>
-          <tfoot><tr><th>Total</th>${slotFoot}<th class="num">${report.total}</th></tr></tfoot>
+          <tfoot><tr><th>Total</th>${slotFoot}<th class="num">${faixaTotal}</th></tr></tfoot>
         </table></div></div>
-        <div class="rp-pane"><div class="rp-chart-wrap">${slotChart}</div></div>
+        <div class="rp-pane"><div class="rp-chart-wrap rp-fit">${slotChart}</div></div>
       </div>
     </div>
     <div class="section-card">
@@ -549,6 +554,13 @@ if (typeof document !== 'undefined') {
     });
     document.getElementById('rpClearDay').addEventListener('click', rpClearDay);
     document.getElementById('rpClearWeek').addEventListener('click', rpClearWeek);
+    document.getElementById('rpReport').addEventListener('change', e => {
+      if (e.target.id !== 'rpHideWeekend') return;
+      rpState.hideWeekend = e.target.checked;
+      rpSave();
+      rpRenderReport();
+    });
+    document.getElementById('rpPrint').addEventListener('click', () => window.print());
     rpRefresh();
   });
 }
