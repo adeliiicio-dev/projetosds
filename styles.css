@@ -446,6 +446,7 @@ h1 {
 .rp-table { font-size: .75rem; }
 .rp-table th, .rp-table td { padding: 3px 6px !important; }
 .rp-chart { width: 100%; height: auto; display: block; }
+.rp-covered { display: none; }
 .rp-chart-left { display: flex; justify-content: flex-start; align-items: flex-start; }
 .rp-chart-left .rp-chart { width: auto; max-width: 100%; margin-left: 0; margin-right: auto; }
 .rp-check { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text-main); font-size: .85rem; font-weight: 600; }
@@ -490,4 +491,6 @@ h1 {
   .rp-coe .rp-pair { display: block !important; }
   .rp-coe .rp-pane + .rp-pane { margin-top: 8px !important; }
   h1 { font-size: 18pt !important; margin: 0 0 8px !important; }
+  .section-title { width: 100%; }
+  .rp-covered { display: block; margin-left: auto; color: #9aa6d6 !important; font-weight: 600; }
 }

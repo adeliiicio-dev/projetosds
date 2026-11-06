@@ -376,6 +376,29 @@ function rpNames(list, labelOf) {
   return list.map(labelOf).join(', ');
 }
 
+function rpCoveredDays() {
+  return RP_DAYS.filter(day => rpDayCount(day.id) > 0);
+}
+
+function rpCoveredLabel(days) {
+  if (!days.length) return 'Nenhum dia';
+  const ids = days.map(d => d.id).join(',');
+  if (ids === RP_DAYS.map(d => d.id).join(',')) return 'Segunda a Domingo';
+  if (ids === RP_DAYS.filter(d => !RP_WEEKEND.has(d.id)).map(d => d.id).join(',')) return 'Segunda a Sexta';
+  return days.map(d => d.name).join(', ');
+}
+
+function rpSubDayPeaks(report) {
+  const peaks = {};
+  RP_DAYS.forEach(day => {
+    const max = report.subsidiaries.reduce((m, rec) => Math.max(m, rec.days[day.id] || 0), 0);
+    peaks[day.id] = max > 0
+      ? report.subsidiaries.filter(rec => rec.days[day.id] === max).map(rec => rec.name)
+      : [];
+  });
+  return peaks;
+}
+
 function rpDayPeaks(report) {
   const peaks = {};
   RP_DAYS.forEach(day => {
@@ -421,10 +444,13 @@ function rpRenderReport() {
   }));
 
   const subHead = RP_DAYS.map(d => `<th>${rpEsc(d.short)}</th>`).join('');
+  const subDayPeaks = rpSubDayPeaks(report);
   const subBody = report.subsidiaries.map(rec => {
-    const days = RP_DAYS.map(d => `<td class="num">${rec.days[d.id]}</td>`).join('');
-    const win = winSubs.has(rec.name) ? ' rp-win' : '';
-    return `<tr><th class="${win}">${rpEsc(rec.name)}</th>${days}<td class="num${win}">${rec.total}</td></tr>`;
+    const days = RP_DAYS.map(d => {
+      const win = subDayPeaks[d.id].includes(rec.name) ? ' rp-win' : '';
+      return `<td class="num${win}">${rec.days[d.id]}</td>`;
+    }).join('');
+    return `<tr><th>${rpEsc(rec.name)}</th>${days}<td class="num">${rec.total}</td></tr>`;
   }).join('');
   const subDayFoot = RP_DAYS.map(day => `<th class="num">${report.dayTotals.find(d => d.id === day.id).total}</th>`).join('');
   const subTable = report.subsidiaries.length
@@ -453,6 +479,7 @@ function rpRenderReport() {
       <div class="section-title">
         <i class="bi bi-calendar-week text-accent fs-4"></i>
         <h4 class="m-0">Semana</h4>
+        <span class="rp-covered">${rpEsc(rpCoveredLabel(rpCoveredDays()))}</span>
       </div>
       <div class="rp-stats rp-stats-2">
         <div class="rp-stat"><span>Total de tickets</span><strong>${report.total}</strong></div>
@@ -566,5 +593,5 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { rpParseBox, rpBuildReport, rpBlankTexts, rpDayPeaks, RP_DAYS, RP_SLOTS };
+  module.exports = { rpParseBox, rpBuildReport, rpBlankTexts, rpDayPeaks, rpSubDayPeaks, rpCoveredLabel, RP_DAYS, RP_SLOTS, RP_WEEKEND };
 }
