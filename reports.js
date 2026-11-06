@@ -23,6 +23,9 @@ const RP_SLOTS = [
   { id: 'h21', label: '21h–22h' }
 ];
 
+const RP_SLOT_COLORS = ['#6b86ff', '#38bdf8', '#fbbf24', '#f87171'];
+const RP_DAY_COLORS = ['#6b86ff', '#38bdf8', '#34d399', '#fbbf24', '#f87171', '#c084fc', '#fb7185'];
+
 const RP_WEEKEND = new Set(['sab', 'dom']);
 
 const rpState = {
@@ -440,11 +443,11 @@ function rpSubSlotMatrix(report) {
   });
 }
 
-function rpMatrixChart(groups, title) {
-  const colors = ['#6b86ff', '#38bdf8', '#fbbf24', '#f87171'];
-  const series = groups.map(group => group.values);
-  const max = rpNiceMax(Math.max(1, ...series.flat(), 0));
+function rpMatrixChart(groups, series, title) {
+  const values = groups.map(group => group.values);
+  const max = rpNiceMax(Math.max(1, ...values.flat(), 0));
   const n = Math.max(groups.length, 1);
+  const nSeries = Math.max(series.length, 1);
   const width = 560;
   const height = 248;
   const padL = 34;
@@ -457,7 +460,7 @@ function rpMatrixChart(groups, title) {
   const baseY = padT + plotH;
   const groupW = plotW / n;
   const inner = groupW * 0.8;
-  const barW = inner / RP_SLOTS.length;
+  const barW = inner / nSeries;
   const ticks = [0, max / 2, max].filter((v, i, list) => list.indexOf(v) === i);
   const grid = ticks.map(v => {
     const y = baseY - (v / max) * plotH;
@@ -467,25 +470,25 @@ function rpMatrixChart(groups, title) {
   }).join('');
   const drawn = groups.map((group, i) => {
     const x0 = padL + i * groupW + (groupW - inner) / 2;
-    const bars = RP_SLOTS.map((slot, s) => {
-      const value = series[i][s] || 0;
+    const bars = series.map((item, s) => {
+      const value = values[i][s] || 0;
       const h = (value / max) * plotH;
       const x = x0 + s * barW + 1;
       const y = baseY - h;
       return `<g>
-        <title>${rpEsc(group.label)} ${rpEsc(slot.label)}: ${value}</title>
-        <rect x="${x}" y="${y}" width="${Math.max(barW - 2, 1)}" height="${h}" rx="2" fill="${colors[s]}"></rect>
+        <title>${rpEsc(group.label)} ${rpEsc(item.label)}: ${value}</title>
+        <rect x="${x}" y="${y}" width="${Math.max(barW - 2, 1)}" height="${h}" rx="2" fill="${item.color}"></rect>
       </g>`;
     }).join('');
     const labelX = padL + i * groupW + groupW / 2;
     return `${bars}<text x="${labelX}" y="${baseY + 16}" fill="#cdd5ff" font-size="11" text-anchor="middle" font-family="Inter, sans-serif">${rpEsc(rpShort(group.label, 12))}</text>`;
   }).join('');
-  const legendW = 124;
-  const legend = RP_SLOTS.map((slot, s) => {
+  const legendW = (width - padL - padR) / nSeries;
+  const legend = series.map((item, s) => {
     const x = padL + s * legendW;
     const y = height - 12;
-    return `<rect x="${x}" y="${y - 8}" width="10" height="10" rx="2" fill="${colors[s]}"></rect>
-      <text x="${x + 14}" y="${y}" fill="#cdd5ff" font-size="11" font-family="Inter, sans-serif">${rpEsc(slot.label)}</text>`;
+    return `<rect x="${x}" y="${y - 8}" width="10" height="10" rx="2" fill="${item.color}"></rect>
+      <text x="${x + 14}" y="${y}" fill="#cdd5ff" font-size="10" font-family="Inter, sans-serif">${rpEsc(item.label)}</text>`;
   }).join('');
   return `<svg class="rp-chart rp-chart-matrix" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMinYMin meet" role="img">
     <title>${rpEsc(title || 'Tickets por faixa')}</title>
@@ -527,7 +530,6 @@ function rpRenderReport() {
   const report = rpBuildReport(rpState.texts);
   const dayPeaks = rpDayPeaks(report);
   const winPeriods = new Set(report.periodWinners.map(p => p.id));
-  const winSubs = new Set(report.subWinners.map(s => s.name));
 
   const faixaDays = rpState.hideWeekend ? RP_DAYS.filter(d => !RP_WEEKEND.has(d.id)) : RP_DAYS;
   const faixaTotal = faixaDays.reduce((sum, day) => sum + report.dayTotals.find(d => d.id === day.id).total, 0);
@@ -546,10 +548,12 @@ function rpRenderReport() {
     return `<tr><th>${rpEsc(day.short)}</th>${cells}<td class="num">${dayTotal}</td></tr>`;
   }).join('');
   const slotFoot = faixaPeriods.map(p => `<th class="num">${p.total}</th>`).join('');
+  const slotSeries = RP_SLOTS.map((slot, i) => ({ label: slot.label, color: RP_SLOT_COLORS[i] }));
+  const daySeries = RP_DAYS.map((day, i) => ({ label: day.short, color: RP_DAY_COLORS[i] }));
   const slotChart = rpMatrixChart(faixaDays.map(day => ({
     label: day.short,
     values: RP_SLOTS.map(slot => report.boxes.find(b => b.day === day.id && b.slot === slot.id).count)
-  })), 'Tickets por dia e faixa');
+  })), slotSeries, 'Tickets por dia e faixa');
 
   const subHead = RP_DAYS.map(d => `<th>${rpEsc(d.short)}</th>`).join('');
   const subDayPeaks = rpSubDayPeaks(report);
@@ -568,11 +572,10 @@ function rpRenderReport() {
         <tfoot><tr><th>Total</th>${subDayFoot}<th class="num">${report.total}</th></tr></tfoot>
       </table>`
     : `<p class="muted mb-0">Nenhum COE_subsidiaries ainda.</p>`;
-  const subChart = rpBars((report.subsidiaries.length ? report.subsidiaries : [{ name: '—', total: 0 }]).map(rec => ({
+  const subDayChart = rpMatrixChart((report.subsidiaries.length ? report.subsidiaries : [{ name: '—', days: {} }]).map(rec => ({
     label: rec.name,
-    value: rec.total,
-    win: winSubs.has(rec.name)
-  })));
+    values: RP_DAYS.map(day => rec.days[day.id] || 0)
+  })), daySeries, 'Tickets por subsidiary e dia');
 
   const periodLabel = rpNames(report.periodWinners, p => `${rpSlotById(p.id).label} (${p.total})`);
   const covered = rpCoveredRange(report);
@@ -592,16 +595,16 @@ function rpRenderReport() {
     return `<th class="num">${total}</th>`;
   }).join('');
   const subSlotTable = subSlots.length
-    ? `<table class="table table-sm table-dark table-bordered mb-0 rp-table">
-        <thead><tr><th>COE</th>${subSlotHead}<th>Total</th></tr></thead>
-        <tbody>${subSlotBody}</tbody>
+    ? `<table class="table table-sm table-dark table-bordered mb-0 rp-table rp-sub-slot">
+        <thead><tr><th class="rp-name">SUB</th>${subSlotHead}<th>Total</th></tr></thead>
+        <tbody>${subSlotBody.replaceAll('<tr><th>', '<tr><th class="rp-name">')}</tbody>
         <tfoot><tr><th>Total</th>${subSlotFoot}<th class="num">${report.total}</th></tr></tfoot>
       </table>`
     : `<p class="muted mb-0">Nenhum COE_subsidiaries ainda.</p>`;
   const subSlotChart = rpMatrixChart((subSlots.length ? subSlots : [{ name: '—', slots: [0, 0, 0, 0] }]).map(rec => ({
     label: rec.name,
     values: rec.slots
-  })), 'Tickets por subsidiary e faixa');
+  })), slotSeries, 'Tickets por subsidiary e faixa');
   const saveNote = rpState.saveError ? `<p class="muted">${rpEsc(rpState.saveError)}</p>` : '';
 
   root.innerHTML = `
@@ -651,7 +654,7 @@ function rpRenderReport() {
       <p class="muted mb-3">Total: ${report.total} ticket${report.total === 1 ? '' : 's'}. O mesmo total da tabela de faixas.</p>
       <div class="rp-pair">
         <div class="rp-pane"><div class="table-wrap">${subTable}</div></div>
-        <div class="rp-pane"><div class="rp-chart-wrap rp-chart-left">${subChart}</div></div>
+        <div class="rp-pane"><div class="rp-chart-wrap">${subDayChart}</div></div>
       </div>
     </div>`;
 }

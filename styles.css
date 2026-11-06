@@ -446,6 +446,8 @@ h1 {
 .rp-fit { max-height: none !important; overflow: visible !important; }
 .rp-table { font-size: .75rem; }
 .rp-table th, .rp-table td { padding: 3px 6px !important; }
+.rp-table thead th { text-align: center; }
+.rp-sub-slot .rp-name { width: 28%; min-width: 7.6rem; white-space: nowrap; word-break: normal; }
 .rp-chart { width: 100%; height: auto; display: block; }
 .rp-chart-wrap:has(.rp-chart-matrix) { max-height: none; overflow: visible; }
 .rp-chart-matrix { max-height: 260px; }
@@ -488,6 +490,8 @@ h1 {
   }
   .rp-win, td.rp-win, th.rp-win { background: rgba(248, 113, 113, .22) !important; color: #fca5a5 !important; }
   .rp-table td.num, .rp-table th.num, .table-wrap td.num, .table-wrap th.num { text-align: right !important; }
+  .rp-table thead th { text-align: center !important; }
+  .rp-sub-slot .rp-name { width: 28% !important; min-width: 0 !important; white-space: nowrap !important; word-break: normal !important; overflow-wrap: normal !important; }
   .rp-chart { width: 100% !important; max-width: 100% !important; height: auto !important; max-height: 150px !important; }
   .rp-chart-matrix { max-height: 210px !important; }
   .rp-chart-left .rp-chart { width: auto !important; margin-left: 0 !important; margin-right: auto !important; }
