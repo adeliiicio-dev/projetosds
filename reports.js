@@ -13,16 +13,8 @@ const RP_DAYS = [
 ];
 
 const RP_KEY_COL = 0;
-const RP_CREATED_COL = 3;
-const RP_UPDATED_COL = 4;
 const RP_SUB_COL = 8;
-
-const RP_MONTHS = {
-  jan: 0, janeiro: 0, feb: 1, fev: 1, fevereiro: 1, mar: 2, marco: 2,
-  apr: 3, abr: 3, abril: 3, may: 4, mai: 4, maio: 4, jun: 5, junho: 5,
-  jul: 6, julho: 6, aug: 7, ago: 7, agosto: 7, sep: 8, set: 8, setembro: 8,
-  oct: 9, out: 9, outubro: 9, nov: 10, novembro: 10, dec: 11, dez: 11, dezembro: 11
-};
+const RP_TZ = 'America/Sao_Paulo';
 
 const RP_SLOTS = [
   { id: 'h18', label: '18h–19h' },
@@ -92,46 +84,6 @@ function rpKeyOf(raw) {
   if (m) return m[0];
   const t = rpCleanCell(raw);
   return t ? t.toUpperCase() : '';
-}
-
-function rpUtcDate(year, month, day) {
-  if (month < 0 || month > 11 || day < 1 || day > 31) return null;
-  const time = Date.UTC(year, month, day);
-  const date = new Date(time);
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day) return null;
-  return time;
-}
-
-function rpParseDate(raw) {
-  const s = rpCleanCell(raw);
-  if (!s) return null;
-  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return rpUtcDate(+m[1], +m[2] - 1, +m[3]);
-  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
-  if (m) {
-    let year = +m[3];
-    if (year < 100) year += 2000;
-    return rpUtcDate(year, +m[2] - 1, +m[1]);
-  }
-  m = s.match(/^(\d{1,2})(?:\s+de)?[\s\/\-.]+([A-Za-zçÇ.]+)(?:\s+de)?[\s\/\-.]+(\d{2,4})/);
-  if (m) {
-    const month = RP_MONTHS[rpFold(m[2]).replace(/\./g, '')];
-    if (month != null) {
-      let year = +m[3];
-      if (year < 100) year += 2000;
-      return rpUtcDate(year, month, +m[1]);
-    }
-  }
-  m = s.match(/^([A-Za-zçÇ.]+)\s+(\d{1,2}),?\s+(\d{2,4})/);
-  if (m) {
-    const month = RP_MONTHS[rpFold(m[1]).replace(/\./g, '')];
-    if (month != null) {
-      let year = +m[3];
-      if (year < 100) year += 2000;
-      return rpUtcDate(year, month, +m[2]);
-    }
-  }
-  return null;
 }
 
 function rpFmtDate(time) {
@@ -239,8 +191,7 @@ function rpParseBox(text) {
     const key = rpKeyOf(row.cells[RP_KEY_COL]);
     if (!/^[A-Z][A-Z0-9]+-\d+$/.test(key) || seen.has(key)) return;
     seen.add(key);
-    const when = rpParseDate(row.cells[RP_UPDATED_COL]) ?? rpParseDate(row.cells[RP_CREATED_COL]);
-    rows.push({ key, subsidiary: rpCleanCell(row.cells[RP_SUB_COL]) || '(vazio)', when });
+    rows.push({ key, subsidiary: rpCleanCell(row.cells[RP_SUB_COL]) || '(vazio)' });
   });
   const warning = rows.length ? '' : 'Nenhuma Key na colagem.';
   return { rows, count: rows.length, error: '', warning };
@@ -433,30 +384,44 @@ function rpNames(list, labelOf) {
   return list.map(labelOf).join(', ');
 }
 
-function rpCoveredRange(report) {
-  const dates = [];
-  RP_DAYS.forEach(day => {
-    const counts = new Map();
-    report.boxes.filter(b => b.day === day.id).forEach(box => {
-      box.rows.forEach(row => {
-        if (row.when == null) return;
-        counts.set(row.when, (counts.get(row.when) || 0) + 1);
-      });
-    });
-    let best = null;
-    let hits = 0;
-    counts.forEach((n, time) => {
-      if (n > hits || (n === hits && (best == null || time < best))) {
-        best = time;
-        hits = n;
-      }
-    });
-    if (best != null) dates.push(best);
-  });
-  if (!dates.length) return '';
-  const min = Math.min(...dates);
-  const max = Math.max(...dates);
+function rpSaoPauloToday(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: RP_TZ, year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(now);
+  const pick = type => +parts.find(p => p.type === type).value;
+  return Date.UTC(pick('year'), pick('month') - 1, pick('day'));
+}
+
+function rpWeekMonday(todayUtc) {
+  const dow = new Date(todayUtc).getUTCDay();
+  return todayUtc - ((dow + 6) % 7) * 86400000;
+}
+
+function rpCoveredRange(report, now = new Date()) {
+  const monday = rpWeekMonday(rpSaoPauloToday(now));
+  const chosen = RP_DAYS.filter(day => (report.dayTotals.find(d => d.id === day.id)?.total || 0) > 0);
+  const days = chosen.length ? chosen : RP_DAYS;
+  const times = days.map(day => monday + RP_DAYS.findIndex(d => d.id === day.id) * 86400000);
+  const min = Math.min(...times);
+  const max = Math.max(...times);
   return min === max ? rpFmtDate(min) : `${rpFmtDate(min)} a ${rpFmtDate(max)}`;
+}
+
+function rpWeekCountryBars(report) {
+  const winners = report.periodWinners;
+  if (!winners.length) return [{ label: '—', value: 0, win: false }];
+  const items = [];
+  winners.forEach(period => {
+    rpPeriodCountries(report, period.id).forEach(row => {
+      const label = winners.length > 1 ? `${row.name} ${rpSlotById(period.id).label}` : row.name;
+      items.push({ label, value: row.total });
+    });
+  });
+  if (!items.length) return [{ label: '—', value: 0, win: false }];
+  const max = Math.max(...items.map(it => it.value));
+  return items
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, 'pt'))
+    .map(it => ({ ...it, win: it.value > 0 && it.value === max }));
 }
 
 function rpPeriodCountries(report, slotId) {
@@ -612,12 +577,8 @@ function rpRenderReport() {
   })));
 
   const periodLabel = rpNames(report.periodWinners, p => `${rpSlotById(p.id).label} (${p.total})`);
-  const periodCountries = report.periodWinners.map(p => {
-    const parts = rpPeriodCountries(report, p.id).map(c => `${rpEsc(c.name)} ${c.total}`).join(' · ');
-    const prefix = report.periodWinners.length > 1 ? `${rpEsc(rpSlotById(p.id).label)}: ` : '';
-    return `<em>${prefix}${parts}</em>`;
-  }).join('');
   const covered = rpCoveredRange(report);
+  const weekCountryChart = rpBars(rpWeekCountryBars(report));
   const weekChart = rpBars(RP_SLOTS.map(slot => {
     const value = report.periodTotals.find(p => p.id === slot.id).total;
     return { label: slot.label, value, win: winPeriods.has(slot.id) && value > 0 };
@@ -634,11 +595,11 @@ function rpRenderReport() {
       </div>
       <div class="rp-stats rp-stats-2">
         <div class="rp-stat"><span>Total de tickets</span><strong>${report.total}</strong></div>
-        <div class="rp-stat"><span>Período com mais tickets</span><strong>${rpEsc(periodLabel)}</strong>${periodCountries}</div>
+        <div class="rp-stat"><span>Período com mais tickets</span><strong>${rpEsc(periodLabel)}</strong></div>
       </div>
       <div class="rp-pair">
         <div class="rp-pane"><div class="rp-chart-wrap">${weekChart}</div></div>
-        <div class="rp-pane"><div class="rp-chart-wrap">${subChart}</div></div>
+        <div class="rp-pane"><div class="rp-chart-wrap">${weekCountryChart}</div></div>
       </div>
     </div>
     <div class="section-card">
@@ -746,7 +707,7 @@ if (typeof document !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     rpParseBox, rpBuildReport, rpBlankTexts, rpDayPeaks, rpSubDayPeaks,
-    rpParseDate, rpCoveredRange, rpPeriodCountries, rpFmtDate,
+    rpCoveredRange, rpPeriodCountries, rpWeekCountryBars, rpFmtDate,
     RP_DAYS, RP_SLOTS, RP_WEEKEND
   };
 }
