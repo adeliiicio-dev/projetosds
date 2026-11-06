@@ -408,31 +408,19 @@ function rpCoveredRange(report, now = new Date()) {
 }
 
 function rpWeekCountryBars(report) {
-  const winners = report.periodWinners;
-  if (!winners.length) return [{ label: '—', value: 0, win: false }];
-  const items = [];
-  winners.forEach(period => {
-    rpPeriodCountries(report, period.id).forEach(row => {
-      const label = winners.length > 1 ? `${row.name} ${rpSlotById(period.id).label}` : row.name;
-      items.push({ label, value: row.total });
-    });
-  });
-  if (!items.length) return [{ label: '—', value: 0, win: false }];
-  const max = Math.max(...items.map(it => it.value));
-  return items
-    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, 'pt'))
-    .map(it => ({ ...it, win: it.value > 0 && it.value === max }));
-}
-
-function rpPeriodCountries(report, slotId) {
+  const slots = new Set(report.periodWinners.map(p => p.id));
+  if (!slots.size) return [{ label: '—', value: 0, win: false }];
   const counts = new Map();
-  report.boxes.filter(b => b.slot === slotId).forEach(box => {
+  report.boxes.filter(b => slots.has(b.slot)).forEach(box => {
     box.rows.forEach(row => {
       counts.set(row.subsidiary, (counts.get(row.subsidiary) || 0) + 1);
     });
   });
-  return Array.from(counts, ([name, total]) => ({ name, total }))
-    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, 'pt'));
+  const items = Array.from(counts, ([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, 'pt'));
+  if (!items.length) return [{ label: '—', value: 0, win: false }];
+  const max = Math.max(...items.map(it => it.value));
+  return items.map(it => ({ ...it, win: it.value > 0 && it.value === max }));
 }
 
 function rpNiceMax(max) {
@@ -707,7 +695,7 @@ if (typeof document !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     rpParseBox, rpBuildReport, rpBlankTexts, rpDayPeaks, rpSubDayPeaks,
-    rpCoveredRange, rpPeriodCountries, rpWeekCountryBars, rpFmtDate,
+    rpCoveredRange, rpWeekCountryBars, rpFmtDate,
     RP_DAYS, RP_SLOTS, RP_WEEKEND
   };
 }
