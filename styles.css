@@ -447,6 +447,7 @@ h1 {
 .rp-table { font-size: .75rem; }
 .rp-table th, .rp-table td { padding: 3px 6px !important; }
 .rp-table thead th { text-align: center; }
+.rp-table td.num, .rp-table tfoot .num { text-align: right; }
 .rp-sub-slot .rp-name { width: 28%; min-width: 7.6rem; white-space: nowrap; word-break: normal; }
 .rp-chart { width: 100%; height: auto; display: block; }
 .rp-chart-wrap:has(.rp-chart-matrix) { max-height: none; overflow: visible; }
