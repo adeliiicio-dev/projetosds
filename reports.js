@@ -481,7 +481,7 @@ function rpRenderReport() {
         <div class="rp-pane"><div class="rp-chart-wrap">${slotChart}</div></div>
       </div>
     </div>
-    <div class="section-card">
+    <div class="section-card rp-coe">
       <div class="section-title">
         <i class="bi bi-diagram-3 text-accent fs-4"></i>
         <h4 class="m-0">COE_subsidiaries por dia</h4>
