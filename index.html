@@ -6,7 +6,7 @@
   <title>SDS - Conferência de Planilhas</title>
   <link rel="stylesheet" href="vendor/bootstrap.min.css?v=2" />
   <link rel="stylesheet" href="vendor/bootstrap-icons.css?v=2" />
-  <link rel="stylesheet" href="styles.css?v=19" />
+  <link rel="stylesheet" href="styles.css?v=20" />
 </head>
 <body>
   <div class="wrapper">
@@ -355,26 +355,90 @@
       <!-- Reports -->
       <section id="screen-reports" class="screen">
         <h1>Reports</h1>
-        <p class="subtitle">Relatório semanal. Cada dia tem quatro colagens do Jira, sem cabeçalho. A ordem é Key, Summary, Status, Created, Updated, Reporter, Assignee, Time to SLA-ES1, COE_subsidiaries, Actions. Key repetida na mesma faixa conta uma vez. Nas duas tabelas, o total de tickets é o mesmo.</p>
+        <div class="country-tabs no-print" id="rpGuides">
+          <button type="button" class="country-tab active" data-rp-guide="semanal">
+            <span class="country-tab-name">Relatório semanal</span>
+          </button>
+          <button type="button" class="country-tab" data-rp-guide="v2">
+            <span class="country-tab-name">Report v2</span>
+          </button>
+        </div>
 
-        <div class="country-tabs" id="rpDays"></div>
+        <div id="rpGuideSemanal">
+          <p class="subtitle">Relatório semanal. Cada dia tem quatro colagens do Jira, sem cabeçalho. A ordem é Key, Summary, Status, Created, Updated, Reporter, Assignee, Time to SLA-ES1, COE_subsidiaries, Actions. Key repetida na mesma faixa conta uma vez. Nas duas tabelas, o total de tickets é o mesmo.</p>
 
-        <div class="section-card">
-          <div class="section-title">
-            <i class="bi bi-clipboard-data text-accent fs-4"></i>
-            <h4 class="m-0" id="rpDayTitle">Segunda</h4>
+          <div class="country-tabs" id="rpDays"></div>
+
+          <div class="section-card" id="rpPasteCard">
+            <div class="section-title">
+              <i class="bi bi-clipboard-data text-accent fs-4"></i>
+              <h4 class="m-0" id="rpDayTitle">Segunda</h4>
+            </div>
+            <p class="muted mb-3">Cole direto, sem cabeçalho. A 1ª coluna é a Key e a 9ª é COE_subsidiaries.</p>
+            <div class="rp-grid" id="rpSlots"></div>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+              <button type="button" class="btn btn-outline-secondary" id="rpClearDay"><i class="bi bi-x-circle"></i> Limpar este dia</button>
+              <button type="button" class="btn btn-outline-danger" id="rpClearWeek"><i class="bi bi-trash"></i> Limpar a semana</button>
+            </div>
           </div>
-          <p class="muted mb-3">Cole direto, sem cabeçalho. A 1ª coluna é a Key e a 9ª é COE_subsidiaries.</p>
-          <div class="rp-grid" id="rpSlots"></div>
-          <div class="d-flex flex-wrap gap-2 mt-3">
-            <button type="button" class="btn btn-outline-secondary" id="rpClearDay"><i class="bi bi-x-circle"></i> Limpar este dia</button>
-            <button type="button" class="btn btn-outline-danger" id="rpClearWeek"><i class="bi bi-trash"></i> Limpar a semana</button>
+
+          <div id="rpReport"></div>
+          <div class="d-flex justify-content-end">
+            <button type="button" class="btn btn-samsung no-print" id="rpPrint"><i class="bi bi-printer"></i> Imprimir / PDF</button>
           </div>
         </div>
 
-        <div id="rpReport"></div>
-        <div class="d-flex justify-content-end">
-          <button type="button" class="btn btn-samsung no-print" id="rpPrint"><i class="bi bi-printer"></i> Imprimir / PDF</button>
+        <div id="rpGuideV2" class="rp-guide-off no-print">
+          <p class="subtitle">Consulta somente leitura. A ferramenta só busca tickets no Jira. Ela não cria, edita, comenta nem muda status. Abra com <code>node server.js</code> e preencha o .env neste computador.</p>
+
+          <form id="jrForm" class="section-card">
+            <div class="section-title">
+              <i class="bi bi-search text-accent fs-4"></i>
+              <h4 class="m-0">Filtros</h4>
+            </div>
+            <div class="row g-3">
+              <div class="col-lg-4">
+                <label class="form-label" for="jrUser">Usuário</label>
+                <input id="jrUser" class="form-control" placeholder="Nome do usuário no Jira" autocomplete="off">
+              </div>
+              <div class="col-lg-4">
+                <label class="form-label" for="jrFrom">Faixa de horário</label>
+                <div class="d-flex gap-2">
+                  <input id="jrFrom" class="form-control" type="time" value="18:00" required>
+                  <input id="jrTo" class="form-control" type="time" value="19:00" aria-label="Fim da faixa" required>
+                </div>
+                <div class="d-flex flex-wrap gap-2 mt-2" id="jrSlots"></div>
+              </div>
+              <div class="col-lg-4">
+                <span class="form-label d-block">Dias</span>
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                  <button type="button" class="btn btn-sm btn-outline-secondary" id="jrPrevWeek">Semana anterior</button>
+                  <strong id="jrWeekLabel"></strong>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" id="jrNextWeek">Próxima semana</button>
+                </div>
+                <div class="jr-days" id="jrDays"></div>
+                <div class="jr-extra" id="jrExtraDays"></div>
+              </div>
+            </div>
+            <p class="muted mt-3 mb-3">A faixa segue o relógio de Brasília. Escolha um ou mais dias.</p>
+            <button type="submit" class="btn btn-samsung" id="jrSearch"><i class="bi bi-search"></i> Consultar</button>
+          </form>
+
+          <div class="section-card">
+            <div class="section-title">
+              <i class="bi bi-table text-accent fs-4"></i>
+              <h4 class="m-0">Tickets</h4>
+            </div>
+            <div class="jr-moves" id="jrMoves">
+              <label class="rp-check"><input type="radio" name="jrMove" value="all" checked> Tudo<span id="jrCountAll"></span></label>
+              <label class="rp-check"><input type="radio" name="jrMove" value="todo"> Saiu de Request para To do<span id="jrCountTodo"></span></label>
+              <label class="rp-check"><input type="radio" name="jrMove" value="clarification"> Saiu de Request para Clarification<span id="jrCountClar"></span></label>
+            </div>
+            <div id="jrMessage"></div>
+            <div id="jrMeta"></div>
+            <div id="jrTable"></div>
+            <div id="jrPayload"></div>
+          </div>
         </div>
       </section>
 
@@ -391,5 +455,7 @@
   <script src="knox.js?v=3"></script>
   <script src="prioridades.js?v=10"></script>
   <script src="reports.js?v=13"></script>
+  <script src="jira-search.js?v=1"></script>
+  <script src="jira-ui.js?v=1"></script>
 </body>
 </html>
