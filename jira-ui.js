@@ -63,10 +63,11 @@ function jrWeekDates(monday) {
 }
 
 function jrFilter(rows, transition) {
-  if (typeof jiraSearch !== 'undefined' && jiraSearch.filterByTransition) {
-    return jiraSearch.filterByTransition(rows, transition);
+  const list = Array.isArray(rows) ? rows : [];
+  if (transition === 'todo' || transition === 'clarification') {
+    return list.filter(row => Array.isArray(row.kinds) && row.kinds.includes(transition));
   }
-  return rows;
+  return list.slice();
 }
 
 function jrSetGuide(id) {
@@ -167,7 +168,7 @@ function jrRenderResults() {
   const notes = [];
   if (jrState.info.truncated) notes.push(`A consulta parou em ${jrState.info.fetched} tickets.`);
   if (jrState.info.dropped) {
-    notes.push(`O Jira devolveu ${jrState.info.fetched}. ${jrState.info.matched} ficam na faixa, no horário de Brasília.`);
+    notes.push(`O Jira devolveu ${jrState.info.fetched}. ${jrState.info.matched} foram alterados por essa pessoa na faixa.`);
   }
   if (jrState.info.changelog === false) notes.push('O Jira não devolveu histórico de status.');
   const visible = jrFilter(jrState.issues, jrState.transition);
@@ -299,11 +300,13 @@ if (typeof document !== 'undefined') {
     document.getElementById('jrFrom').addEventListener('input', jrRenderSlots);
     document.getElementById('jrTo').addEventListener('input', jrRenderSlots);
     document.getElementById('jrForm').addEventListener('submit', jrConsult);
-    document.getElementById('jrMoves').addEventListener('change', event => {
+    const applyMove = event => {
       const radio = event.target.closest('input[name="jrMove"]');
       if (!radio) return;
       jrState.transition = radio.value;
       jrRenderResults();
-    });
+    };
+    document.getElementById('jrMoves').addEventListener('change', applyMove);
+    document.getElementById('jrMoves').addEventListener('click', applyMove);
   });
 }

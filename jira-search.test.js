@@ -33,8 +33,8 @@ async function testJql() {
     timeTo: '19:00',
     days: ['2026-11-11', '2026-11-10']
   });
-  assert.ok(jql.includes('assignee = "Ada \\"Silva\\""'));
-  assert.ok(jql.includes('status changed BY "Ada \\"Silva\\""'));
+  assert.equal(jql.includes('assignee ='), false);
+  assert.ok(jql.includes('status changed BY "Ada \\"Silva\\"" DURING ('));
   assert.ok(jql.includes('2026/11/10 18:00'));
   assert.ok(jql.includes('2026/11/10 18:59'));
   assert.ok(jql.includes('2026/11/11 18:00'));
@@ -53,21 +53,34 @@ async function testWindowsAndMoves() {
   assert.equal(jira.statusMoveKind('Request', 'To-Do'), 'todo');
   assert.equal(jira.statusMoveKind('Request', 'Clarificação'), 'clarification');
   assert.equal(jira.statusMoveKind('To Do', 'Request'), '');
+  assert.equal(jira.statusMoveKind('Request [ 16705 ]', 'To do [ 10000 ]'), 'todo');
+  assert.equal(jira.statusMoveKind('Original: Request [ 16705 ]\tNew: To do [ 10000 ]', ''), 'todo');
+  assert.equal(jira.statusMoveKind('Original: Request [ 16705 ] New: Clarification [ 10001 ]', ''), 'clarification');
 
   const rows = jira.buildRows([
     issue('LC-1', { from: 'Request', to: 'To Do', at: '2026-11-10T18:15:00.000-0300', updated: '2026-11-10T18:15:00.000-0300', summary: 'Um' }),
     issue('LC-2', { from: 'Request', to: 'Clarification', at: '2026-11-10T18:40:00.000-0300', updated: '2026-11-10T18:40:00.000-0300', summary: 'Dois' }),
     issue('LC-3', { from: 'Request', to: 'Done', at: '2026-11-10T18:20:00.000-0300', updated: '2026-11-10T18:20:00.000-0300', summary: 'Três' }),
-    issue('LC-4', { from: 'Request', to: 'To Do', at: '2026-11-10T22:10:00.000-0300', updated: '2026-11-10T22:10:00.000-0300', summary: 'Fora' })
+    issue('LC-4', { from: 'Request', to: 'To Do', at: '2026-11-10T22:10:00.000-0300', updated: '2026-11-10T22:10:00.000-0300', summary: 'Fora' }),
+    issue('LC-5', { from: 'Request [ 16705 ]', to: 'To do [ 10000 ]', at: '2026-11-10T18:12:00.000-0300', updated: '2026-11-10T18:12:00.000-0300', author: 'Bruno', summary: 'De outro' }),
+    issue('LC-6', { from: 'Original: Request [ 16705 ]\tNew: Clarification [ 10001 ]', to: '', at: '2026-11-10T18:30:00.000-0300', updated: '2026-11-10T18:30:00.000-0300', author: 'Ada Silva', summary: 'Texto cru' })
   ], FILTERS);
-  assert.equal(rows.dropped, 1);
-  assert.deepEqual(rows.rows.map(row => row.key), ['LC-1', 'LC-2', 'LC-3']);
+  assert.equal(rows.dropped, 2);
+  assert.deepEqual(rows.rows.map(row => row.key), ['LC-1', 'LC-2', 'LC-3', 'LC-6']);
   assert.deepEqual(jira.filterByTransition(rows.rows, 'todo').map(row => row.key), ['LC-1']);
-  assert.deepEqual(jira.filterByTransition(rows.rows, 'clarification').map(row => row.key), ['LC-2']);
-  assert.equal(jira.filterByTransition(rows.rows, 'all').length, 3);
+  assert.deepEqual(jira.filterByTransition(rows.rows, 'clarification').map(row => row.key), ['LC-2', 'LC-6']);
+  assert.equal(jira.filterByTransition(rows.rows, 'all').length, 4);
   assert.match(rows.rows[0].moveText, /Request → To Do/);
   assert.match(rows.rows[0].moveText, /18:15/);
   assert.equal(rows.rows[0].payload.statusChanges[0].from, 'Request');
+  const bracket = jira.buildRows([
+    issue('LC-7', { from: 'Request [ 16705 ]', to: 'To do [ 10000 ]', at: '2026-11-10T18:18:00.000-0300', updated: '2026-11-10T18:18:00.000-0300', summary: 'Colchete' })
+  ], FILTERS);
+  assert.deepEqual(jira.filterByTransition(bracket.rows, 'todo').map(row => row.key), ['LC-7']);
+  assert.equal(jira.filterByTransition(bracket.rows, 'clarification').length, 0);
+  assert.match(bracket.rows[0].moveText, /Request → To do/);
+  assert.equal(bracket.rows[0].moveText.includes('16705'), false);
+  assert.equal(bracket.rows[0].payload.statusChanges[0].to, 'To do');
 }
 
 async function testPaging() {

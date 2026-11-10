@@ -62,13 +62,12 @@ function buildSearchJql(filters) {
   const clean = assertSearchInput(filters);
   const quotedUser = jqlQuote(clean.user);
   const end = minuteBefore(clean.timeTo);
-  const who = `(assignee = ${quotedUser} OR reporter = ${quotedUser} OR status changed BY ${quotedUser})`;
   const when = clean.days.map(day => {
     const start = jqlQuote(jiraStamp(day, clean.timeFrom));
     const stop = jqlQuote(jiraStamp(day, end));
-    return `((updated >= ${start} AND updated <= ${stop}) OR (status changed DURING (${start}, ${stop})))`;
+    return `status changed BY ${quotedUser} DURING (${start}, ${stop})`;
   }).join(' OR ');
-  return `${who} AND (${when}) ORDER BY updated DESC`;
+  return `(${when}) ORDER BY updated DESC`;
 }
 
 function foldStatus(value) {
@@ -80,12 +79,51 @@ function foldStatus(value) {
     .trim();
 }
 
+const ORIGINAL_NEW = /original\s*:\s*([^[\]]+?)\s*\[\s*\d+\s*\]\s*new\s*:\s*([^[\]]+?)\s*\[\s*\d+\s*\]/i
+
+function cleanStatus(value) {
+  let text = String(value || '').replace(/\s+/g, ' ').trim();
+  text = text.replace(/^(original|new)\s*:\s*/i, '').trim();
+  const cut = text.indexOf('[');
+  if (cut >= 0) text = text.slice(0, cut).trim();
+  return text;
+}
+
+function statusEnds(from, to) {
+  const found = `${from || ''}\n${to || ''}`.match(ORIGINAL_NEW);
+  if (found) return { from: found[1].trim(), to: found[2].trim() };
+  return { from: cleanStatus(from), to: cleanStatus(to) };
+}
+
 function statusMoveKind(from, to) {
-  if (foldStatus(from) !== 'request') return '';
-  const dest = foldStatus(to);
+  const ends = statusEnds(from, to);
+  if (foldStatus(ends.from) !== 'request') return '';
+  const dest = foldStatus(ends.to);
   if (dest === 'to do' || dest === 'todo') return 'todo';
   if (dest === 'clarification' || dest === 'clarificacao') return 'clarification';
   return '';
+}
+
+function samePerson(query, author) {
+  const wanted = foldStatus(query);
+  if (!wanted) return false;
+  const raw = String(query || '').trim().toLowerCase();
+  const values = [];
+  if (typeof author === 'string') values.push(author);
+  else if (author) {
+    ['displayName', 'name', 'key', 'accountId', 'emailAddress'].forEach(key => {
+      if (author[key]) values.push(author[key]);
+    });
+  }
+  const words = wanted.split(' ').filter(Boolean);
+  return values.some(value => {
+    if (String(value).trim().toLowerCase() === raw) return true;
+    const name = foldStatus(value);
+    if (!name) return false;
+    if (name === wanted) return true;
+    const nameWords = name.split(' ').filter(Boolean);
+    return words.every(word => nameWords.includes(word));
+  });
 }
 
 function personName(value) {
@@ -145,10 +183,22 @@ function statusHistory(issue) {
     const at = history && history.created ? history.created : '';
     const items = history && Array.isArray(history.items) ? history.items : [];
     items.forEach(item => {
-      if (String(item && item.field || '').toLowerCase() !== 'status') return;
-      const from = item.fromString || '';
-      const to = item.toString || '';
-      out.push({ from, to, at, author, kind: statusMoveKind(from, to) });
+      const rawFrom = item && (item.fromString || '') || '';
+      const rawTo = item && (item.toString || '') || '';
+      const field = String(item && item.field || '');
+      const parsed = `${rawFrom}\n${rawTo}`.match(ORIGINAL_NEW);
+      const status = field.toLowerCase() === 'status' || !!parsed;
+      const ends = status ? statusEnds(rawFrom, rawTo) : { from: '', to: '' };
+      out.push({
+        from: ends.from,
+        to: ends.to,
+        at,
+        author: history && history.author,
+        authorName: author,
+        field,
+        status,
+        kind: status ? statusMoveKind(ends.from, ends.to) : ''
+      });
     });
   });
   return out;
@@ -167,39 +217,33 @@ function formatWhen(iso) {
 }
 
 function oneMove(move) {
-  const bits = [`${move.from || '—'} → ${move.to || '—'}`];
+  const label = move.status ? `${move.from || '—'} → ${move.to || '—'}` : `Alterou ${move.field || 'campo'}`;
+  const bits = [label];
   const when = move.at ? formatWhen(move.at) : '';
   if (when) bits.push(when);
-  if (move.author) bits.push(move.author);
+  if (move.authorName) bits.push(move.authorName);
   return bits.join(' · ');
 }
 
-function moveText(moves) {
-  const inside = moves.filter(move => move.inWindow);
-  if (inside.length) return inside.map(oneMove).join('\n');
-  if (!moves.length) return '';
-  const latest = [...moves].sort((a, b) => String(b.at).localeCompare(String(a.at)))[0];
-  return `Fora da faixa: ${oneMove(latest)}`;
-}
-
-function toRow(issue, windows) {
+function toRow(issue, windows, user) {
   const fields = issue && issue.fields ? issue.fields : {};
-  const history = statusHistory(issue);
-  const moves = history.map(move => ({
+  const history = statusHistory(issue).map(move => ({
     ...move,
-    inWindow: move.at ? instantInWindows(move.at, windows) : false
+    inWindow: move.at ? instantInWindows(move.at, windows) : false,
+    byUser: samePerson(user, move.author)
   }));
-  const updatedIn = fields.updated ? instantInWindows(fields.updated, windows) : false;
-  const inWindow = updatedIn || moves.some(move => move.inWindow) || (!fields.updated && !history.length);
-  const kinds = [...new Set(moves.filter(move => move.inWindow && move.kind).map(move => move.kind))];
+  const mine = history.filter(move => move.inWindow && move.byUser);
+  const statusMoves = mine.filter(move => move.status);
+  const kinds = [...new Set(statusMoves.map(move => move.kind).filter(Boolean))];
+  const shown = statusMoves.length ? statusMoves : mine;
   return {
     key: issue && issue.key ? issue.key : '',
     summary: typeof fields.summary === 'string' ? fields.summary : '',
     status: statusName(fields.status),
     assignee: personName(fields.assignee),
-    moveText: moveText(moves),
+    moveText: shown.map(oneMove).join('\n'),
     kinds,
-    inWindow,
+    inWindow: mine.length > 0,
     payload: {
       key: issue && issue.key ? issue.key : '',
       fields: {
@@ -208,11 +252,11 @@ function toRow(issue, windows) {
         assignee: fields.assignee ?? null,
         updated: fields.updated ?? null
       },
-      statusChanges: history.map(move => ({
+      statusChanges: statusMoves.map(move => ({
         from: move.from,
         to: move.to,
         at: move.at,
-        author: move.author
+        author: move.authorName
       }))
     }
   };
@@ -223,7 +267,7 @@ function buildRows(issues, filters) {
   const rows = [];
   let dropped = 0;
   issues.forEach(issue => {
-    const row = toRow(issue, windows);
+    const row = toRow(issue, windows, filters.user);
     if (!row.inWindow) {
       dropped += 1;
       return;
