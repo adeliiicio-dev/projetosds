@@ -144,14 +144,14 @@ function listen(handler) {
 async function testHttp() {
   const saved = {
     JIRA_URL: process.env.JIRA_URL,
-    JIRA_USER: process.env.JIRA_USER,
-    JIRA_API_TOKEN: process.env.JIRA_API_TOKEN
+    BEARER_TOKEN: process.env.BEARER_TOKEN
   };
   const calls = [];
   const token = 'local-test-token';
   process.env.JIRA_URL = 'http://jira.example/jira';
-  process.env.JIRA_USER = 'ada@example.com';
-  process.env.JIRA_API_TOKEN = token;
+  delete process.env.JIRA_USER;
+  delete process.env.JIRA_API_TOKEN;
+  process.env.BEARER_TOKEN = token;
   const fetchImpl = async (url, options) => {
     calls.push({ url: String(url), method: options.method, redirect: options.redirect, headers: options.headers, body: options.body });
     if (!String(url).endsWith('/rest/api/2/search') || options.method !== 'POST') {
@@ -195,7 +195,7 @@ async function testHttp() {
     assert.equal(ok.body.includes(token), false);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].redirect, 'error');
-    assert.equal(calls[0].headers.Authorization, `Basic ${Buffer.from(`ada@example.com:${token}`).toString('base64')}`);
+    assert.equal(calls[0].headers.Authorization, `Bearer ${token}`);
     assert.equal(String(calls[0].url), 'http://jira.example/jira/rest/api/2/search');
 
     const deniedFetch = async () => ({
@@ -213,12 +213,12 @@ async function testHttp() {
       await new Promise(resolve => deniedApp.app.close(resolve));
     }
 
-    delete process.env.JIRA_API_TOKEN;
+    delete process.env.BEARER_TOKEN;
     const unconfigured = await requestOnce(port, 'POST', '/api/jira/search', JSON.stringify(FILTERS));
     assert.equal(unconfigured.status, 503);
     assert.match(unconfigured.body, /JIRA_URL/);
-    assert.match(unconfigured.body, /JIRA_USER/);
-    assert.match(unconfigured.body, /JIRA_API_TOKEN/);
+    assert.match(unconfigured.body, /BEARER_TOKEN/);
+    assert.equal(/JIRA_USER|JIRA_API_TOKEN/.test(unconfigured.body), false);
 
     const hidden = await requestOnce(port, 'GET', '/.env');
     assert.equal(hidden.status, 404);
@@ -230,7 +230,7 @@ async function testHttp() {
     assert.equal(wrong.status, 405);
   } finally {
     await new Promise(resolve => app.close(resolve));
-    ['JIRA_URL', 'JIRA_USER', 'JIRA_API_TOKEN'].forEach(key => {
+    ['JIRA_URL', 'BEARER_TOKEN'].forEach(key => {
       if (saved[key] == null) delete process.env[key];
       else process.env[key] = saved[key];
     });
@@ -247,11 +247,12 @@ function testSources() {
   assert.equal(/method:\s*'DELETE'/.test(src), false);
   const example = fs.readFileSync(path.join(__dirname, '.env.example'), 'utf8');
   assert.match(example, /^JIRA_URL=$/m);
-  assert.match(example, /^JIRA_USER=$/m);
-  assert.match(example, /^JIRA_API_TOKEN=$/m);
+  assert.match(example, /^BEARER_TOKEN=$/m);
+  assert.equal(/JIRA_USER|JIRA_API_TOKEN|Basic /.test(example + '\n' + src), false);
   const local = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
   assert.equal(local.includes('local-test-token'), false);
-  assert.match(local, /^JIRA_API_TOKEN=$/m);
+  assert.match(local, /^BEARER_TOKEN=$/m);
+  assert.equal(/JIRA_USER|JIRA_API_TOKEN/.test(local), false);
 }
 
 async function main() {

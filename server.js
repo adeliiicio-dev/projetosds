@@ -42,7 +42,7 @@ function loadEnvFile(filePath) {
 
 function publicMessage(err, token) {
   if (err && (err.status === 401 || err.status === 403)) {
-    return 'O Jira recusou o acesso. Confira JIRA_USER e JIRA_API_TOKEN no .env.';
+    return 'O Jira recusou o acesso. Confira BEARER_TOKEN no .env.';
   }
   let message = String(err && err.message || 'Falha ao consultar o Jira.');
   if (token && token.length >= 4 && message.includes(token)) message = 'Falha ao consultar o Jira.';
@@ -51,10 +51,9 @@ function publicMessage(err, token) {
 
 function jiraConfig() {
   const baseUrl = String(process.env.JIRA_URL || '').trim();
-  const user = String(process.env.JIRA_USER || '').trim();
-  const token = String(process.env.JIRA_API_TOKEN || '').trim();
-  if (!baseUrl || !user || !token) {
-    const err = new Error('Jira não configurado. Preencha JIRA_URL, JIRA_USER e JIRA_API_TOKEN no arquivo .env.');
+  const token = String(process.env.BEARER_TOKEN || '').trim();
+  if (!baseUrl || !token) {
+    const err = new Error('Jira não configurado. Preencha JIRA_URL e BEARER_TOKEN no arquivo .env.');
     err.status = 503;
     throw err;
   }
@@ -75,7 +74,7 @@ function jiraConfig() {
   parsed.password = '';
   parsed.search = '';
   parsed.hash = '';
-  return { baseUrl: parsed.toString(), user, token };
+  return { baseUrl: parsed.toString(), token };
 }
 
 function searchUrl(baseUrl) {
@@ -119,14 +118,13 @@ async function jiraPost(config, body, fetchImpl) {
     err.status = 500;
     throw err;
   }
-  const auth = Buffer.from(`${config.user}:${config.token}`, 'utf8').toString('base64');
   let response;
   try {
     response = await fetchImpl(url, {
       method: 'POST',
       redirect: 'error',
       headers: {
-        Authorization: `Basic ${auth}`,
+        Authorization: `Bearer ${config.token}`,
         Accept: 'application/json',
         'Content-Type': 'application/json'
       },
@@ -273,7 +271,7 @@ function createHandler(options = {}) {
       await handleRequest(req, res, options);
     } catch (err) {
       if (res.headersSent) return;
-      const token = String(process.env.JIRA_API_TOKEN || '');
+      const token = String(process.env.BEARER_TOKEN || '');
       sendJson(res, err.status || 502, { error: publicMessage(err, token) });
     }
   };
