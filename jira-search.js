@@ -294,6 +294,32 @@ function oneMove(move) {
   return when ? `${label} · ${when}` : label;
 }
 
+function backToRequest(from, to) {
+  const start = foldStatus(from);
+  const dest = foldStatus(to);
+  return (start === 'clarification' || start === 'clarificacao') && dest === 'request';
+}
+
+function correctedInPeriod(history) {
+  const steps = (Array.isArray(history) ? history : [])
+    .filter(move => move && move.status && move.inWindow)
+    .slice()
+    .sort((a, b) => {
+      const left = Date.parse(a.at);
+      const right = Date.parse(b.at);
+      if (!Number.isNaN(left) && !Number.isNaN(right) && left !== right) return left - right;
+      return String(a.at || '').localeCompare(String(b.at || ''));
+    });
+  let stage = 0;
+  for (const move of steps) {
+    const kind = move.byUser ? statusMoveKind(move.from, move.to) : '';
+    if (kind === 'clarification') stage = 1;
+    else if (stage === 1 && backToRequest(move.from, move.to)) stage = 2;
+    else if (stage === 2 && kind === 'todo') return true;
+  }
+  return false;
+}
+
 function changeKind(change) {
   if (!change) return '';
   if (change.kind === 'todo' || change.kind === 'clarification') return change.kind;
@@ -477,6 +503,7 @@ function toRow(issue, windows, user, fieldId) {
   const kinds = [...new Set(statusMoves.map(move => move.kind))];
   const shown = statusMoves;
   const subsidiary = readSubsidiary(fields, fieldId);
+  const corrected = correctedInPeriod(history);
   return {
     key: issue && issue.key ? issue.key : '',
     summary: typeof fields.summary === 'string' ? fields.summary : '',
@@ -484,6 +511,7 @@ function toRow(issue, windows, user, fieldId) {
     assignee: personName(fields.assignee),
     moveText: shown.map(oneMove).join('\n'),
     subsidiary,
+    corrected,
     kinds,
     inWindow: statusMoves.length > 0,
     payload: {

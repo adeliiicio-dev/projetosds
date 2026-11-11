@@ -209,11 +209,12 @@ function jrSumSlices(list) {
   return { weekdays, hours, bands, subsidiaries, tickets };
 }
 
-function jrCountTable(caption, items) {
+function jrCountTable(caption, items, quantity) {
   const body = items.map(item => `<tr><th>${jrEsc(item.label)}</th><td class="num">${item.value}</td></tr>`).join('');
   const total = items.reduce((sum, item) => sum + item.value, 0);
+  const head = quantity || 'Mudanças';
   return `<div class="table-wrap rp-fit"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
-    <thead><tr><th>${jrEsc(caption)}</th><th>Mudanças</th></tr></thead>
+    <thead><tr><th>${jrEsc(caption)}</th><th>${jrEsc(head)}</th></tr></thead>
     <tbody>${body}</tbody>
     <tfoot><tr><th>Total</th><th class="num">${total}</th></tr></tfoot>
   </table></div>`;
@@ -258,7 +259,7 @@ function jrRenderMetrics() {
     const label = `${jrFmt(day.date)} ${jrWeekdayLabel(day.date)} · ${day.user}`;
     return `<label class="rp-check"><input type="checkbox" data-jr-picked="${jrEsc(key)}"${checked}${jrState.period === 'saved' ? '' : ' disabled'}> ${jrEsc(label)}</label>`;
   }).join('');
-  const subBoards = JR_SUBS.map(name => `<h4 class="m-0 mt-4">${jrEsc(name)}</h4>${jrMetricPair(jrSubCounts(metrics, name), metrics.bands)}`).join('');
+  const subBoards = JR_SUBS.map(name => `<h4 class="m-0 mt-4">${jrEsc(name)}</h4>${jrMetricPair(jrSubCounts(metrics, name), metrics.bands)}${jrExtraTables(name)}`).join('');
   host.innerHTML = `<div class="section-card">
     <div class="section-title">
       <i class="bi bi-bar-chart text-accent fs-4"></i>
@@ -272,8 +273,71 @@ function jrRenderMetrics() {
     <p class="muted mb-3">${metrics.tickets} ${noun} dele na faixa escolhida, no horário de Brasília. ${jrEsc(source)} Cada mudança entra em um dia e em uma faixa.</p>
     <h4 class="m-0 mb-3">Todas Subs</h4>
     ${jrMetricPair(metrics, metrics.bands)}
+    ${jrExtraTables('')}
     ${subBoards}
     ${jrSummary(summaryMetrics)}
+  </div>`;
+}
+
+function jrSubMatch(value, name) {
+  if (!name) return true;
+  const key = jrFoldSub(name);
+  return String(value || '').split(',').map(jrFoldSub).filter(Boolean).includes(key);
+}
+
+function jrSliceSubTotal(slice, name) {
+  if (!name) return (slice && slice.tickets) || 0;
+  let total = 0;
+  ((slice && slice.subsidiaries) || []).forEach(rec => {
+    if (!jrSubMatch(rec.name, name)) return;
+    total += (rec.days || []).reduce((sum, count) => sum + (count || 0), 0);
+  });
+  return total;
+}
+
+function jrBlockStats(rows, name) {
+  let todo = 0;
+  let clarification = 0;
+  let corrected = 0;
+  (rows || []).forEach(row => {
+    if (!jrSubMatch(row && row.subsidiary, name)) return;
+    const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
+    changes.forEach(change => {
+      if (change.kind === 'todo') todo += 1;
+      else if (change.kind === 'clarification') clarification += 1;
+    });
+    if (row.corrected) corrected += 1;
+  });
+  return { todo, clarification, corrected };
+}
+
+function jrStatsFor(name) {
+  if (jrState.period !== 'saved') return jrBlockStats(jrState.issues, name);
+  const chosen = jrSavedForCurrent().filter(day => jrState.picked.has(jrDayKey(day)));
+  const sum = kind => chosen.reduce((total, day) => {
+    const slice = day.counts && day.counts[kind];
+    return total + jrSliceSubTotal(slice, name);
+  }, 0);
+  const dates = new Set(chosen.map(day => day.date));
+  const rows = (jrState.issues || []).filter(row => {
+    const changes = row && row.payload && row.payload.statusChanges || [];
+    return changes.some(change => dates.has(change.date));
+  });
+  return { todo: sum('todo'), clarification: sum('clarification'), corrected: jrBlockStats(rows, name).corrected };
+}
+
+function jrExtraTables(name) {
+  const stats = jrStatsFor(name);
+  const types = jrCountTable('Tipo de movimentação', [
+    { label: 'Request → To do', value: stats.todo },
+    { label: 'Request → Clarification', value: stats.clarification }
+  ]);
+  const fixed = jrCountTable('Tickets corrigidos', [
+    { label: 'Clarification → Request → To do', value: stats.corrected }
+  ], 'Tickets');
+  return `<div class="rp-pair mt-3">
+    <div class="rp-pane">${types}</div>
+    <div class="rp-pane">${fixed}</div>
   </div>`;
 }
 

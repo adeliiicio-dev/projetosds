@@ -23,7 +23,8 @@ function issue(key, extra) {
       summary: extra.summary || key,
       status: { name: extra.status || 'To Do' },
       assignee: { displayName: extra.assignee || 'Ada' },
-      updated: extra.updated
+      updated: extra.updated,
+      ...(extra.fieldsExtra || {})
     },
     changelog: {
       histories: extra.history === null ? [] : (extra.histories || [{
@@ -148,6 +149,56 @@ async function testWindowsAndMoves() {
   assert.equal(mixed.rows[0].moveText.includes('Done'), false);
   assert.equal(mixed.rows[0].moveText.includes('Bruno'), false);
   assert.equal(mixed.rows[0].moveText.includes('Adelino'), false);
+  assert.equal(mixed.rows[0].corrected, false);
+
+  const day = '2026-11-10T';
+  const corrected = jira.buildRows([
+    issue('LC-40', {
+      summary: 'Corrigido',
+      updated: `${day}18:40:00.000-0300`,
+      fieldsExtra: { COE_subsidiaries: 'Chile' },
+      histories: [
+        { created: `${day}18:40:00.000-0300`, author: { displayName: 'Ada' }, items: [{ field: 'status', fromString: 'Request', toString: 'To do' }] },
+        { created: `${day}18:20:00.000-0300`, author: { displayName: 'Bruno Costa' }, items: [{ field: 'status', fromString: 'Clarification', toString: 'Request' }] },
+        { created: `${day}18:05:00.000-0300`, author: { displayName: 'Ada' }, items: [{ field: 'status', fromString: 'Request', toString: 'Clarification' }] }
+      ]
+    }),
+    issue('LC-41', {
+      summary: 'Sem volta',
+      updated: `${day}18:40:00.000-0300`,
+      histories: [
+        { created: `${day}18:05:00.000-0300`, author: { displayName: 'Ada' }, items: [{ field: 'status', fromString: 'Request', toString: 'Clarification' }] },
+        { created: `${day}18:40:00.000-0300`, author: { displayName: 'Ada' }, items: [{ field: 'status', fromString: 'Request', toString: 'To do' }] }
+      ]
+    }),
+    issue('LC-42', {
+      summary: 'Volta fora da faixa',
+      updated: `${day}18:40:00.000-0300`,
+      histories: [
+        { created: `${day}18:05:00.000-0300`, author: { displayName: 'Ada' }, items: [{ field: 'status', fromString: 'Request', toString: 'Clarification' }] },
+        { created: `${day}17:20:00.000-0300`, author: { displayName: 'Bruno Costa' }, items: [{ field: 'status', fromString: 'Clarification', toString: 'Request' }] },
+        { created: `${day}18:40:00.000-0300`, author: { displayName: 'Ada' }, items: [{ field: 'status', fromString: 'Request', toString: 'To do' }] }
+      ]
+    }),
+    issue('LC-43', {
+      summary: 'To do de outro',
+      updated: `${day}18:40:00.000-0300`,
+      histories: [
+        { created: `${day}18:05:00.000-0300`, author: { displayName: 'Ada' }, items: [{ field: 'status', fromString: 'Request', toString: 'Clarification' }] },
+        { created: `${day}18:20:00.000-0300`, author: { displayName: 'Bruno Costa' }, items: [{ field: 'status', fromString: 'Clarification', toString: 'Request' }] },
+        { created: `${day}18:40:00.000-0300`, author: { displayName: 'Bruno Costa' }, items: [{ field: 'status', fromString: 'Request', toString: 'To do' }] }
+      ]
+    })
+  ], { user: 'Ada', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
+  const fixed = corrected.rows.find(row => row.key === 'LC-40');
+  assert.equal(fixed.corrected, true);
+  assert.equal(fixed.subsidiary, 'Chile');
+  assert.equal(fixed.moveText.includes('Clarification → Request'), false);
+  assert.equal(corrected.rows.find(row => row.key === 'LC-41').corrected, false);
+  assert.equal(corrected.rows.find(row => row.key === 'LC-42').corrected, false);
+  assert.equal(corrected.rows.find(row => row.key === 'LC-43').corrected, false);
+  assert.equal(jira.countMoves([fixed]).todo, 1);
+  assert.equal(jira.countMoves([fixed]).clarification, 1);
   const mixedMetrics = jira.metricsForRows(mixed.rows, 'Ade', 'all', RANGE_18_19);
   assert.equal(mixedMetrics.tickets, 1);
   assert.deepEqual(mixedMetrics.hours, [1]);
