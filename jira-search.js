@@ -272,11 +272,45 @@ function formatWhen(iso) {
 
 function oneMove(move) {
   const label = move.status ? `${move.from || '—'} → ${move.to || '—'}` : `Alterou ${move.field || 'campo'}`;
-  const bits = [label];
   const when = move.at ? formatWhen(move.at) : '';
-  if (when) bits.push(when);
-  if (move.authorName) bits.push(move.authorName);
-  return bits.join(' · ');
+  return when ? `${label} · ${when}` : label;
+}
+
+function weekdayIndex(date) {
+  const match = String(date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return -1;
+  const utc = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return (utc.getUTCDay() + 6) % 7;
+}
+
+function metricsForRows(rows) {
+  const weekdays = [0, 0, 0, 0, 0, 0, 0];
+  const hours = [0, 0, 0, 0];
+  const seenDay = weekdays.map(() => new Set());
+  const seenHour = hours.map(() => new Set());
+  const seen = new Set();
+  (Array.isArray(rows) ? rows : []).forEach(row => {
+    const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
+    const id = row && row.key ? row.key : '';
+    changes.forEach((change, index) => {
+      const parts = zonedParts(change && change.at);
+      if (!parts || parts.minutes < 18 * 60 || parts.minutes >= 22 * 60) return;
+      const day = weekdayIndex(parts.date);
+      const hour = Math.floor(parts.minutes / 60) - 18;
+      if (day < 0 || hour < 0 || hour > 3) return;
+      const token = id || `${parts.date}-${index}`;
+      if (!seenDay[day].has(token)) {
+        seenDay[day].add(token);
+        weekdays[day] += 1;
+      }
+      if (!seenHour[hour].has(token)) {
+        seenHour[hour].add(token);
+        hours[hour] += 1;
+      }
+      seen.add(token);
+    });
+  });
+  return { weekdays, hours, tickets: seen.size };
 }
 
 function toRow(issue, windows, user) {
@@ -391,6 +425,7 @@ const jiraSearchApi = {
   instantInWindows,
   buildRows,
   filterByTransition,
+  metricsForRows,
   collectIssues
 };
 

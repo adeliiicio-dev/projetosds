@@ -77,6 +77,7 @@ async function testWindowsAndMoves() {
   assert.equal(jira.filterByTransition(rows.rows, 'all').length, 4);
   assert.match(rows.rows[0].moveText, /Request → To Do/);
   assert.match(rows.rows[0].moveText, /18:15/);
+  assert.equal(rows.rows[0].moveText.includes('Ada'), false);
   assert.equal(rows.rows[0].payload.statusChanges[0].from, 'Request');
   const bracket = jira.buildRows([
     issue('LC-7', { from: 'Request [ 16705 ]', to: 'To do [ 10000 ]', at: '2026-11-10T18:18:00.000-0300', updated: '2026-11-10T18:18:00.000-0300', summary: 'Colchete' })
@@ -96,6 +97,8 @@ async function testWindowsAndMoves() {
   assert.deepEqual(named.rows.map(row => row.key), ['LC-8', 'LC-9', 'LC-10']);
   assert.equal(named.rows[0].kinds.includes('todo'), true);
   assert.equal(named.rows[0].moveText.includes('16705'), false);
+  assert.equal(named.rows[0].moveText.includes('Adelino'), false);
+  assert.match(named.rows[0].moveText, /Request → To do/);
 
   const five = Array.from({ length: 5 }, (_, index) => issue(`LC-2${index}`, {
     from: 'Original: Request [ 16705 ]\tNew: To do [ 10000 ]',
@@ -111,6 +114,26 @@ async function testWindowsAndMoves() {
   const other = jira.buildRows(five, { user: 'Bruno', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
   assert.equal(other.rows.length, 0);
   assert.equal(other.dropped, 5);
+
+  const twice = {
+    key: 'LC-30',
+    payload: {
+      statusChanges: [
+        { from: 'Request', to: 'To do', at: '2026-11-10T18:15:00.000-0300' },
+        { from: 'Request', to: 'To do', at: '2026-11-10T18:40:00.000-0300' }
+      ]
+    }
+  };
+  const metrics = jira.metricsForRows([
+    twice,
+    { key: 'LC-31', payload: { statusChanges: [{ from: 'Request', to: 'To do', at: '2026-11-10T21:05:00.000-0300' }] } },
+    { key: 'LC-32', payload: { statusChanges: [{ from: 'Request', to: 'To do', at: '2026-11-11T18:10:00.000-0300' }] } },
+    { key: 'LC-33', payload: { statusChanges: [{ from: 'Request', to: 'To do', at: '2026-11-10T22:00:00.000-0300' }] } },
+    { key: 'LC-34', payload: { statusChanges: [{ from: 'Request', to: 'To do', at: '2026-11-10T15:20:00.000-0300' }] } }
+  ]);
+  assert.deepEqual(metrics.weekdays, [0, 2, 1, 0, 0, 0, 0]);
+  assert.deepEqual(metrics.hours, [2, 0, 0, 1]);
+  assert.equal(metrics.tickets, 3);
 }
 
 async function testPaging() {

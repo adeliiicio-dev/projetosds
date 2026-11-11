@@ -134,6 +134,52 @@ function jrRenderDays() {
   )).join('');
 }
 
+function jrPeak(items) {
+  const max = Math.max(0, ...items.map(item => item.value));
+  return items.map(item => ({ ...item, win: max > 0 && item.value === max }));
+}
+
+function jrCountTable(caption, items) {
+  const body = items.map(item => `<tr><th>${jrEsc(item.label)}</th><td class="num">${item.value}</td></tr>`).join('');
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  return `<div class="table-wrap rp-fit"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
+    <thead><tr><th>${jrEsc(caption)}</th><th>Tickets</th></tr></thead>
+    <tbody>${body}</tbody>
+    <tfoot><tr><th>Total</th><th class="num">${total}</th></tr></tfoot>
+  </table></div>`;
+}
+
+function jrRenderMetrics() {
+  const host = document.getElementById('jrMetrics');
+  if (!host) return;
+  if (jrState.loading || jrState.error || !jrState.info || typeof jiraSearch === 'undefined') {
+    host.innerHTML = '';
+    return;
+  }
+  const visible = jrFilter(jrState.issues, jrState.transition);
+  const metrics = jiraSearch.metricsForRows(visible);
+  const days = JR_DAY_SHORT.map((label, index) => ({ label, value: metrics.weekdays[index] || 0 }));
+  const hours = JR_SLOTS.map((slot, index) => ({ label: slot.label, value: metrics.hours[index] || 0 }));
+  const dayChart = typeof rpBars === 'function' ? rpBars(jrPeak(days)) : '';
+  const hourChart = typeof rpBars === 'function' ? rpBars(jrPeak(hours)) : '';
+  const noun = metrics.tickets === 1 ? 'ticket' : 'tickets';
+  host.innerHTML = `<div class="section-card">
+    <div class="section-title">
+      <i class="bi bi-bar-chart text-accent fs-4"></i>
+      <h4 class="m-0">Métricas</h4>
+    </div>
+    <p class="muted mb-3">${metrics.tickets} ${noun} deste resultado mudaram de status entre 18h e 22h, no horário de Brasília. Um ticket entra em cada dia e em cada hora em que isso aconteceu.</p>
+    <div class="rp-pair">
+      <div class="rp-pane">${jrCountTable('Dia', days)}</div>
+      <div class="rp-pane"><div class="rp-chart-wrap rp-chart-left">${dayChart}</div></div>
+    </div>
+    <div class="rp-pair rp-week-extra">
+      <div class="rp-pane">${jrCountTable('Hora', hours)}</div>
+      <div class="rp-pane"><div class="rp-chart-wrap rp-chart-left">${hourChart}</div></div>
+    </div>
+  </div>`;
+}
+
 function jrKeyCell(row) {
   const key = row.key || '—';
   if (!row.url) return jrEsc(key);
@@ -147,6 +193,7 @@ function jrRenderResults() {
   const payload = document.getElementById('jrPayload');
   const button = document.getElementById('jrSearch');
   if (!message || !meta || !table || !payload || !button) return;
+  jrRenderMetrics();
   button.disabled = jrState.loading;
   button.innerHTML = jrState.loading
     ? '<i class="bi bi-hourglass-split"></i> Consultando…'
