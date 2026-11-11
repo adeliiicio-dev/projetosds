@@ -367,11 +367,16 @@ function jrSlideTable() {
     clarification: sum.clarification + row.clarification,
     priority: sum.priority + row.priority
   }), { tickets: 0, todo: 0, clarification: 0, priority: 0 });
-  const body = rows.map(row => `<tr><th>${jrEsc(row.code)}</th><td class="num">${row.tickets}</td><td class="num">${row.todo}</td><td class="num">${row.clarification}</td><td class="num">${row.priority}</td></tr>`).join('');
+  const share = (count, tickets) => {
+    const percent = tickets ? Math.round((count / tickets) * 100) : 0;
+    return `${count} (${percent}%)`;
+  };
+  const line = (label, row) => `<tr><th>${jrEsc(label)}</th><td class="num">${row.tickets}</td><td class="num">${share(row.todo, row.tickets)}</td><td class="num">${share(row.clarification, row.tickets)}</td><td class="num">${row.priority}</td></tr>`;
+  const body = rows.map(row => line(row.code, row)).join('');
   return `<div class="table-wrap rp-fit"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
     <thead><tr><th>Sub</th><th>Tickets (quantidade)</th><th>To do</th><th>Clarification</th><th>Priority request</th></tr></thead>
     <tbody>${body}</tbody>
-    <tfoot><tr><th>Total</th><th class="num">${total.tickets}</th><th class="num">${total.todo}</th><th class="num">${total.clarification}</th><th class="num">${total.priority}</th></tr></tfoot>
+    <tfoot>${line('Total', total)}</tfoot>
   </table></div>`;
 }
 
