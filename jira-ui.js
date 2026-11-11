@@ -187,11 +187,7 @@ function jrRenderResults() {
   }
 
   const notes = [];
-  if (jrState.info.truncated) notes.push(`A consulta parou em ${jrState.info.fetched} tickets.`);
-  if (jrState.info.dropped) {
-    notes.push(`O Jira devolveu ${jrState.info.fetched}. ${jrState.info.matched} foram alterados por essa pessoa na faixa.`);
-  }
-  if (jrState.info.changelog === false) notes.push('O Jira não devolveu histórico de status.');
+  if (jrState.info.truncated) notes.push('A busca atingiu o limite e pode haver mais tickets.');
   const visible = jrFilter(jrState.issues, jrState.transition);
   const noun = visible.length === 1 ? 'ticket' : 'tickets';
   meta.innerHTML = `<p class="muted mb-2">${visible.length} ${noun} neste filtro.</p>${notes.map(note => `<p class="muted mb-2">${jrEsc(note)}</p>`).join('')}`;

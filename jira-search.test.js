@@ -8,6 +8,11 @@ const server = require('./server');
 const FILTERS = { user: 'Ada', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] };
 
 function issue(key, extra) {
+  const author = !Object.prototype.hasOwnProperty.call(extra, 'author')
+    ? { displayName: 'Ada' }
+    : (extra.author && typeof extra.author === 'object'
+      ? extra.author
+      : (extra.author ? { displayName: extra.author } : null));
   return {
     key,
     fields: {
@@ -19,8 +24,8 @@ function issue(key, extra) {
     changelog: {
       histories: extra.history === null ? [] : [{
         created: extra.at,
-        author: { displayName: extra.author || 'Ada' },
-        items: [{ field: 'status', fromString: extra.from, toString: extra.to }]
+        author,
+        items: extra.items || [{ field: extra.field || 'status', fromString: extra.from, toString: extra.to }]
       }]
     }
   };
@@ -81,6 +86,31 @@ async function testWindowsAndMoves() {
   assert.match(bracket.rows[0].moveText, /Request → To do/);
   assert.equal(bracket.rows[0].moveText.includes('16705'), false);
   assert.equal(bracket.rows[0].payload.statusChanges[0].to, 'To do');
+
+  const named = jira.buildRows([
+    issue('LC-8', { from: 'Request [ 16705 ]', to: 'To do [ 10000 ]', at: '2026-11-10T18:10:00.000+0000', updated: '2026-11-10T18:10:00.000+0000', author: 'Adelino Souza', summary: 'Fuso' }),
+    issue('LC-9', { from: 'Request', to: 'To Do', at: '2026-11-10T18:12:00.000-0300', updated: '2026-11-10T18:12:00.000-0300', author: 'Ade', summary: 'Curto' }),
+    issue('LC-10', { from: 'Request', to: 'To Do', at: '2026-11-10T18:14:00.000-0300', updated: '2026-11-10T18:14:00.000-0300', author: null, summary: 'Sem autor' }),
+    issue('LC-11', { field: 'summary', from: 'A', to: 'B', at: '2026-11-10T18:16:00.000-0300', updated: '2026-11-10T18:16:00.000-0300', summary: 'Não é status' })
+  ], { user: 'Ade', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
+  assert.deepEqual(named.rows.map(row => row.key), ['LC-8', 'LC-9', 'LC-10']);
+  assert.equal(named.rows[0].kinds.includes('todo'), true);
+  assert.equal(named.rows[0].moveText.includes('16705'), false);
+
+  const five = Array.from({ length: 5 }, (_, index) => issue(`LC-2${index}`, {
+    from: 'Original: Request [ 16705 ]\tNew: To do [ 10000 ]',
+    to: '',
+    at: '2026-11-10T18:20:00.000Z',
+    updated: '2026-11-10T18:20:00.000Z',
+    author: 'Adelino Souza',
+    summary: `Item ${index}`
+  }));
+  const kept = jira.buildRows(five, { user: 'Ade', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
+  assert.equal(kept.dropped, 0);
+  assert.equal(kept.rows.length, 5);
+  const other = jira.buildRows(five, { user: 'Bruno', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
+  assert.equal(other.rows.length, 0);
+  assert.equal(other.dropped, 5);
 }
 
 async function testPaging() {
@@ -99,7 +129,7 @@ async function testPaging() {
   assert.equal(collected.total, 120);
   assert.equal(collected.truncated, false);
   assert.deepEqual(calls.map(call => call.startAt), [0, 50, 100]);
-  assert.ok(calls.every(call => call.maxResults === 50 && call.expand === 'changelog'));
+  assert.ok(calls.every(call => call.maxResults === 50 && call.expand === undefined));
   assert.deepEqual(calls[0].fields, jira.JIRA_FIELDS);
 
   const once = [];
@@ -111,18 +141,14 @@ async function testPaging() {
   assert.equal(stopped.issues.length, 50);
 
   let tries = 0;
-  const retried = await jira.collectIssues(body => {
+  const plain = await jira.collectIssues(body => {
     tries += 1;
-    if (body.expand) {
-      const err = new Error('Expand changelog is invalid');
-      err.status = 400;
-      throw err;
-    }
+    assert.equal(body.expand, undefined);
     return { total: 1, issues: [{ key: 'LC-9', fields: {} }] };
   }, 'x');
-  assert.equal(tries, 2);
-  assert.equal(retried.changelog, false);
-  assert.equal(retried.issues[0].key, 'LC-9');
+  assert.equal(tries, 1);
+  assert.equal(plain.changelog, false);
+  assert.equal(plain.issues[0].key, 'LC-9');
 
   let loops = 0;
   const dupes = await jira.collectIssues(() => {
@@ -165,28 +191,39 @@ async function testHttp() {
   delete process.env.JIRA_USER;
   delete process.env.JIRA_API_TOKEN;
   process.env.BEARER_TOKEN = token;
+  const sample = issue('LC-7', {
+    from: 'Request',
+    to: 'To Do',
+    at: '2026-11-10T18:05:00.000-0300',
+    updated: '2026-11-10T18:05:00.000-0300',
+    summary: 'Portal'
+  });
   const fetchImpl = async (url, options) => {
     calls.push({ url: String(url), method: options.method, redirect: options.redirect, headers: options.headers, body: options.body });
-    if (!String(url).endsWith('/rest/api/2/search') || options.method !== 'POST') {
+    const href = String(url);
+    if (options.method === 'GET' && /\/rest\/api\/2\/issue\/LC-7\/changelog\?/.test(href)) {
+      assert.equal(options.headers.Authorization, `Bearer ${token}`);
+      assert.equal(options.redirect, 'error');
+      assert.equal(options.body, undefined);
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ total: 1, values: sample.changelog.histories })
+      };
+    }
+    if (!href.endsWith('/rest/api/2/search') || options.method !== 'POST') {
       throw new Error(`caminho inesperado ${options.method} ${url}`);
     }
     const payload = JSON.parse(options.body);
     assert.equal(payload.maxResults, 50);
-    assert.equal(payload.expand, 'changelog');
+    assert.equal(payload.expand, undefined);
     assert.equal(options.body.includes(token), false);
+    const bare = { ...sample };
+    delete bare.changelog;
     return {
       ok: true,
       status: 200,
-      text: async () => JSON.stringify({
-        total: 1,
-        issues: [issue('LC-7', {
-          from: 'Request',
-          to: 'To Do',
-          at: '2026-11-10T18:05:00.000-0300',
-          updated: '2026-11-10T18:05:00.000-0300',
-          summary: 'Portal'
-        })]
-      })
+      text: async () => JSON.stringify({ total: 1, issues: [bare] })
     };
   };
   const { app, port } = await listen(server.createHandler({ fetchImpl }));
@@ -206,10 +243,15 @@ async function testHttp() {
     assert.match(data.issues[0].moveText, /Request → To Do/);
     assert.equal(data.issues[0].url, 'http://jira.example/jira/browse/LC-7');
     assert.equal(ok.body.includes(token), false);
-    assert.equal(calls.length, 1);
+    assert.equal(data.total, 1);
+    assert.equal(data.fetched, 1);
+    assert.equal(data.matched, 1);
+    assert.equal(calls.length, 2);
     assert.equal(calls[0].redirect, 'error');
     assert.equal(calls[0].headers.Authorization, `Bearer ${token}`);
     assert.equal(String(calls[0].url), 'http://jira.example/jira/rest/api/2/search');
+    assert.equal(calls[1].method, 'GET');
+    assert.match(String(calls[1].url), /\/rest\/api\/2\/issue\/LC-7\/changelog\?startAt=0&maxResults=100$/);
 
     const deniedFetch = async () => ({
       ok: false,
@@ -241,6 +283,74 @@ async function testHttp() {
     assert.match(page.body, /Report v2/);
     const wrong = await requestOnce(port, 'PUT', '/api/jira/search', '{}');
     assert.equal(wrong.status, 405);
+
+    const mismatch = Array.from({ length: 5 }, (_, index) => {
+      const row = issue(`LC-4${index}`, {
+        from: 'Request',
+        to: 'To Do',
+        at: '2026-11-10T22:10:00.000-0300',
+        updated: '2026-11-10T22:10:00.000-0300',
+        author: 'Bruno',
+        summary: `Fora ${index}`
+      });
+      const bare = { ...row };
+      delete bare.changelog;
+      bare.history = row.changelog.histories;
+      return bare;
+    });
+    const mismatchFetch = async (url, options) => {
+      const href = String(url);
+      if (options.method === 'GET') {
+        const key = href.match(/\/issue\/(LC-4\d)\//);
+        const found = mismatch.find(row => row.key === (key && key[1]));
+        return { ok: true, status: 200, text: async () => JSON.stringify({ total: 1, values: found.history }) };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ total: 5, issues: mismatch }) };
+    };
+    process.env.BEARER_TOKEN = token;
+    const mismatchApp = await listen(server.createHandler({ fetchImpl: mismatchFetch }));
+    try {
+      const empty = await requestOnce(mismatchApp.port, 'POST', '/api/jira/search', JSON.stringify(FILTERS));
+      assert.equal(empty.status, 200);
+      const emptyData = JSON.parse(empty.body);
+      assert.equal(emptyData.total, 0);
+      assert.equal(emptyData.fetched, 0);
+      assert.equal(emptyData.matched, 0);
+      assert.equal(emptyData.issues.length, 0);
+      assert.equal(/"fetched"\s*:\s*5|foram alterados|devolveu/.test(empty.body), false);
+    } finally {
+      await new Promise(resolve => mismatchApp.app.close(resolve));
+    }
+
+    const badFetch = async () => ({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ message: `The number of change history items requested exceeds the limit ${token}` })
+    });
+    const badApp = await listen(server.createHandler({ fetchImpl: badFetch }));
+    try {
+      const bad = await requestOnce(badApp.port, 'POST', '/api/jira/search', JSON.stringify(FILTERS));
+      assert.equal(bad.status, 400);
+      assert.match(bad.body, /change history items/);
+      assert.equal(/O Jira respondeu 400/.test(bad.body), false);
+      assert.equal(bad.body.includes(token), false);
+    } finally {
+      await new Promise(resolve => badApp.app.close(resolve));
+    }
+
+    const rawFetch = async () => ({
+      ok: false,
+      status: 400,
+      text: async () => 'not-json: error in the JQL query'
+    });
+    const rawApp = await listen(server.createHandler({ fetchImpl: rawFetch }));
+    try {
+      const raw = await requestOnce(rawApp.port, 'POST', '/api/jira/search', JSON.stringify(FILTERS));
+      assert.equal(raw.status, 400);
+      assert.match(raw.body, /error in the JQL query/);
+    } finally {
+      await new Promise(resolve => rawApp.app.close(resolve));
+    }
   } finally {
     await new Promise(resolve => app.close(resolve));
     ['JIRA_URL', 'BEARER_TOKEN'].forEach(key => {
@@ -253,7 +363,11 @@ async function testHttp() {
 function testSources() {
   const files = ['server.js', 'jira-search.js', 'jira-ui.js', 'index.html'];
   const src = files.map(file => fs.readFileSync(path.join(__dirname, file), 'utf8')).join('\n');
-  assert.equal(/\/rest\/api\/2\/issue/.test(src), false);
+  const issuePaths = src.match(/\/rest\/api\/2\/issue[^\s'"`]*/g) || [];
+  assert.ok(issuePaths.length > 0);
+  issuePaths.forEach(hit => assert.match(hit, /changelog/));
+  assert.equal(src.includes('foram alterados'), false);
+  assert.equal(src.includes('O Jira devolveu'), false);
   assert.equal(/\btransitions\b/.test(src), false);
   assert.equal(/\/rest\/api\/2\/comment/.test(src), false);
   assert.equal(/method:\s*'PUT'/.test(src), false);

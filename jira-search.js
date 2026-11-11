@@ -173,22 +173,76 @@ function instantInWindows(iso, windows) {
   ));
 }
 
+function wallClock(iso) {
+  const match = String(iso || '').match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/);
+  if (!match) return null;
+  return { date: match[1], minutes: Number(match[2]) * 60 + Number(match[3]) };
+}
+
+function inChosenWindow(iso, windows) {
+  if (instantInWindows(iso, windows)) return true;
+  const wall = wallClock(iso);
+  if (!wall) return false;
+  return windows.some(window => (
+    window.date === wall.date && wall.minutes >= window.start && wall.minutes < window.end
+  ));
+}
+
+function authorBlob(author) {
+  if (!author) return '';
+  if (typeof author === 'string') return author;
+  return ['displayName', 'name', 'key', 'accountId', 'emailAddress']
+    .map(key => author[key] || '')
+    .filter(Boolean)
+    .join(' ');
+}
+
+function authorMatches(user, author) {
+  if (samePerson(user, author)) return true;
+  const wanted = foldStatus(user);
+  const blob = foldStatus(authorBlob(author));
+  if (!blob) return true;
+  const words = wanted.split(' ').filter(word => word.length >= 2);
+  const authorWords = blob.split(' ').filter(word => word.length >= 2);
+  if (!words.length || !authorWords.length) return false;
+  return words.some(word => authorWords.some(part => (
+    part === word || part.startsWith(word) || word.startsWith(part)
+  )));
+}
+
+function historyList(issue) {
+  const changelog = issue && issue.changelog;
+  if (!changelog) return [];
+  if (Array.isArray(changelog)) return changelog;
+  if (Array.isArray(changelog.histories)) return changelog.histories;
+  if (Array.isArray(changelog.values)) return changelog.values;
+  return [];
+}
+
+function statusText(name, id) {
+  const text = name != null && String(name).trim() ? String(name) : '';
+  if (text) return text;
+  const raw = id != null ? String(id) : '';
+  if (raw && !/^\d+$/.test(raw)) return raw;
+  return '';
+}
+
 function statusHistory(issue) {
-  const histories = issue && issue.changelog && Array.isArray(issue.changelog.histories)
-    ? issue.changelog.histories
-    : [];
   const out = [];
-  histories.forEach(history => {
+  historyList(issue).forEach(history => {
     const author = personName(history && history.author);
     const at = history && history.created ? history.created : '';
     const items = history && Array.isArray(history.items) ? history.items : [];
     items.forEach(item => {
-      const rawFrom = item && (item.fromString || '') || '';
-      const rawTo = item && (item.toString || '') || '';
+      const rawFrom = statusText(item && item.fromString, item && item.from);
+      const rawTo = statusText(item && item.toString, item && item.to);
       const field = String(item && item.field || '');
-      const parsed = `${rawFrom}\n${rawTo}`.match(ORIGINAL_NEW);
+      const parsed = `${rawFrom}\n${rawTo}\n${JSON.stringify(item || {})}`.match(ORIGINAL_NEW);
       const status = field.toLowerCase() === 'status' || !!parsed;
-      const ends = status ? statusEnds(rawFrom, rawTo) : { from: '', to: '' };
+      if (!status) return;
+      const ends = parsed
+        ? { from: parsed[1].trim(), to: parsed[2].trim() }
+        : statusEnds(rawFrom, rawTo);
       out.push({
         from: ends.from,
         to: ends.to,
@@ -196,8 +250,8 @@ function statusHistory(issue) {
         author: history && history.author,
         authorName: author,
         field,
-        status,
-        kind: status ? statusMoveKind(ends.from, ends.to) : ''
+        status: true,
+        kind: statusMoveKind(ends.from, ends.to)
       });
     });
   });
@@ -229,11 +283,11 @@ function toRow(issue, windows, user) {
   const fields = issue && issue.fields ? issue.fields : {};
   const history = statusHistory(issue).map(move => ({
     ...move,
-    inWindow: move.at ? instantInWindows(move.at, windows) : false,
-    byUser: samePerson(user, move.author)
+    inWindow: move.at ? inChosenWindow(move.at, windows) : false,
+    byUser: authorMatches(user, move.author)
   }));
-  const mine = history.filter(move => move.inWindow && move.byUser);
-  const statusMoves = mine.filter(move => move.status);
+  const mine = history.filter(move => move.status && move.inWindow && move.byUser);
+  const statusMoves = mine;
   const kinds = [...new Set(statusMoves.map(move => move.kind).filter(Boolean))];
   const shown = statusMoves.length ? statusMoves : mine;
   return {
@@ -291,22 +345,10 @@ async function collectIssues(postPage, jql, fields = JIRA_FIELDS) {
   let startAt = 0;
   let total = Infinity;
   let truncated = false;
-  let useExpand = true;
 
   while (issues.length < total) {
     const body = { jql, fields, startAt, maxResults: JIRA_PAGE_SIZE };
-    if (useExpand) body.expand = 'changelog';
-    let page;
-    try {
-      page = await postPage(body);
-    } catch (err) {
-      const message = String(err && err.message || '');
-      if (useExpand && startAt === 0 && err && err.status === 400 && /expand|changelog/i.test(message)) {
-        useExpand = false;
-        continue;
-      }
-      throw err;
-    }
+    const page = await postPage(body);
     const batch = page && Array.isArray(page.issues) ? page.issues : [];
     const pageTotal = Number(page && page.total);
     if (Number.isFinite(pageTotal)) total = pageTotal;
@@ -333,7 +375,7 @@ async function collectIssues(postPage, jql, fields = JIRA_FIELDS) {
     issues,
     total: Number.isFinite(total) ? total : issues.length,
     truncated,
-    changelog: useExpand
+    changelog: false
   };
 }
 

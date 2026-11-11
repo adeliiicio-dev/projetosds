@@ -45,8 +45,8 @@ function publicMessage(err, token) {
     return 'O Jira recusou o acesso. Confira BEARER_TOKEN no .env.';
   }
   let message = String(err && err.message || 'Falha ao consultar o Jira.');
-  if (token && token.length >= 4 && message.includes(token)) message = 'Falha ao consultar o Jira.';
-  return message.slice(0, 400);
+  if (token && token.length >= 4 && message.includes(token)) message = message.split(token).join('…');
+  return message.slice(0, 800);
 }
 
 function jiraConfig() {
@@ -100,20 +100,48 @@ function browseUrl(baseUrl, key) {
   return url.toString();
 }
 
-function jiraError(data, status) {
+function jiraError(data, status, rawText, token) {
   const parts = [];
   if (data && Array.isArray(data.errorMessages)) parts.push(...data.errorMessages.map(String));
+  if (data && data.errorMessage) parts.push(String(data.errorMessage));
+  if (data && typeof data.message === 'string') parts.push(data.message);
   if (data && data.errors && typeof data.errors === 'object') {
-    Object.values(data.errors).forEach(value => parts.push(String(value)));
+    Object.entries(data.errors).forEach(([key, value]) => {
+      parts.push(value && typeof value === 'object' ? `${key}: ${JSON.stringify(value)}` : `${key}: ${value}`);
+    });
   }
-  const err = new Error(parts.filter(Boolean).join(' ') || `O Jira respondeu ${status}.`);
+  let message = parts.map(part => String(part || '').trim()).filter(Boolean).join(' ');
+  if (!message) message = String(rawText || '').replace(/\s+/g, ' ').trim();
+  if (!message) message = `O Jira respondeu ${status}.`;
+  if (token && token.length >= 4) message = message.split(token).join('…');
+  const err = new Error(message.slice(0, 800));
   err.status = status;
   return err;
 }
 
-async function jiraPost(config, body, fetchImpl) {
-  const url = searchUrl(config.baseUrl);
-  if (!url.pathname.endsWith('/rest/api/2/search')) {
+function changelogUrl(baseUrl, key, startAt) {
+  if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(key || '')) {
+    const err = new Error('Chave de ticket inválida.');
+    err.status = 400;
+    throw err;
+  }
+  const url = new URL(baseUrl);
+  const prefix = url.pathname.replace(/\/+$/, '').replace(/\/rest\/api\/\d+\/search$/i, '');
+  url.pathname = `${prefix}/rest/api/2/issue/${encodeURIComponent(key)}/changelog`.replace(/\/{2,}/g, '/');
+  url.search = '';
+  url.hash = '';
+  url.username = '';
+  url.password = '';
+  url.searchParams.set('startAt', String(startAt));
+  url.searchParams.set('maxResults', '100');
+  return url;
+}
+
+async function jiraCall(config, url, method, body, fetchImpl) {
+  const allowed = method === 'POST'
+    ? url.pathname.endsWith('/rest/api/2/search')
+    : method === 'GET' && /\/rest\/api\/2\/issue\/[^/]+\/changelog$/.test(url.pathname);
+  if (!allowed) {
     const err = new Error('Consulta Jira bloqueada.');
     err.status = 500;
     throw err;
@@ -121,14 +149,14 @@ async function jiraPost(config, body, fetchImpl) {
   let response;
   try {
     response = await fetchImpl(url, {
-      method: 'POST',
+      method,
       redirect: 'error',
       headers: {
         Authorization: `Bearer ${config.token}`,
         Accept: 'application/json',
-        'Content-Type': 'application/json'
+        ...(body ? { 'Content-Type': 'application/json' } : {})
       },
-      body: JSON.stringify(body),
+      body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(JIRA_TIMEOUT_MS)
     });
   } catch (err) {
@@ -146,8 +174,32 @@ async function jiraPost(config, body, fetchImpl) {
   if (text) {
     try { data = JSON.parse(text); } catch { data = null; }
   }
-  if (!response.ok) throw jiraError(data, response.status);
+  if (!response.ok) throw jiraError(data, response.status, text, config.token);
   return data || {};
+}
+
+async function jiraPost(config, body, fetchImpl) {
+  return jiraCall(config, searchUrl(config.baseUrl), 'POST', body, fetchImpl);
+}
+
+async function loadChangelog(config, key, fetchImpl) {
+  if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(key || '')) return [];
+  const histories = [];
+  let startAt = 0;
+  let total = Infinity;
+  while (histories.length < total && startAt < 5000) {
+    const page = await jiraCall(config, changelogUrl(config.baseUrl, key, startAt), 'GET', null, fetchImpl);
+    const batch = Array.isArray(page.values) ? page.values : (Array.isArray(page.histories) ? page.histories : []);
+    const pageTotal = Number(page.total);
+    if (Number.isFinite(pageTotal)) total = pageTotal;
+    if (!batch.length) break;
+    histories.push(...batch);
+    if (histories.length >= total || batch.length < 100) break;
+    const next = startAt + batch.length;
+    if (next <= startAt) break;
+    startAt = next;
+  }
+  return histories;
 }
 
 async function runSearch(input, fetchImpl = global.fetch) {
@@ -155,15 +207,18 @@ async function runSearch(input, fetchImpl = global.fetch) {
   const config = jiraConfig();
   const jql = jira.buildSearchJql(filters);
   const collected = await jira.collectIssues(body => jiraPost(config, body, fetchImpl), jql, jira.JIRA_FIELDS);
+  for (const issue of collected.issues) {
+    issue.changelog = { histories: await loadChangelog(config, issue.key, fetchImpl) };
+  }
   const built = jira.buildRows(collected.issues, filters);
   return {
     jql,
-    total: collected.total,
-    fetched: collected.issues.length,
+    total: built.rows.length,
+    fetched: built.rows.length,
     matched: built.rows.length,
-    dropped: built.dropped,
+    dropped: 0,
     truncated: collected.truncated,
-    changelog: collected.changelog,
+    changelog: true,
     issues: built.rows.map(row => ({ ...row, url: browseUrl(config.baseUrl, row.key) }))
   };
 }
