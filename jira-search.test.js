@@ -517,6 +517,10 @@ async function testHttp() {
     assert.match(page.body, /Relatório semanal/);
     assert.match(page.body, /id="rpDays"/);
     assert.match(page.body, /Anotações/);
+    assert.equal(page.body.includes('id="rpPasteCard"'), false);
+    assert.equal(page.body.includes('id="rpReport"'), false);
+    assert.equal(page.body.includes('Tickets triados por faixa'), false);
+    assert.equal(page.body.includes('COE_subsidiaries por dia'), false);
     assert.match(page.body, /value="Chile"/);
     assert.match(page.body, /value="Peru"/);
     assert.match(page.body, /value="Colombia"/);
@@ -667,7 +671,12 @@ async function testSavedDays() {
     const bad = await requestOnce(port, 'POST', '/api/jira/metrics', JSON.stringify({ date: 'ontem', user: 'Ada', counts }));
     assert.equal(bad.status, 400);
 
+    const missingDay = await requestOnce(port, 'POST', '/api/jira/notes', JSON.stringify({
+      title: 'Plantão', description: 'Fila da noite', subsidiaries: ['Chile']
+    }));
+    assert.equal(missingDay.status, 400);
     const note = await requestOnce(port, 'POST', '/api/jira/notes', JSON.stringify({
+      date: '2026-11-10',
       title: 'Plantão',
       description: 'Fila da noite',
       subsidiaries: ['Mexico', 'Chile'],
@@ -675,11 +684,14 @@ async function testSavedDays() {
     }));
     assert.equal(note.status, 200);
     assert.equal(note.body.includes(token), false);
+    assert.equal(JSON.parse(note.body).note.date, '2026-11-10');
     assert.deepEqual(JSON.parse(note.body).note.subsidiaries, ['Chile', 'Mexico']);
     const afterNote = JSON.parse((await requestOnce(port, 'GET', '/api/jira/metrics')).body);
     assert.equal(afterNote.notes.length, 1);
     assert.equal(afterNote.notes[0].title, 'Plantão');
+    assert.equal(afterNote.notes[0].date, '2026-11-10');
     assert.equal(afterNote.days.length, 1);
+    assert.equal(afterNote.days.some(day => day.date === '2026-11-10'), true);
     const dayAgain = await requestOnce(port, 'POST', '/api/jira/metrics', JSON.stringify({
       date: '2026-11-12', user: 'Ada', counts
     }));
@@ -688,10 +700,13 @@ async function testSavedDays() {
     assert.equal(both.days.length, 2);
     assert.equal(both.notes.length, 1);
     assert.equal(both.notes[0].description, 'Fila da noite');
+    assert.equal(both.notes[0].date, '2026-11-10');
+    assert.equal(both.days.some(day => day.date === '2026-11-10'), true);
     const disk = JSON.parse(fs.readFileSync(metricsPath, 'utf8'));
     assert.equal(disk.notes.length, 1);
     assert.equal(disk.days.length, 2);
     assert.equal(disk.notes[0].title, 'Plantão');
+    assert.equal(disk.notes[0].date, '2026-11-10');
     const rejected = await requestOnce(port, 'POST', '/api/jira/notes', JSON.stringify({
       title: 'Segredo', description: token, subsidiaries: ['Peru']
     }));

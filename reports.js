@@ -308,19 +308,33 @@ function rpHydrate() {
   });
 }
 
-function rpDayCount(dayId) {
-  return RP_SLOTS.reduce((sum, slot) => sum + rpParseBox(rpState.texts[dayId][slot.id]).count, 0);
+function rpIsoFromUtc(time) {
+  const date = new Date(time);
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  return `${date.getUTCFullYear()}-${month}-${day}`;
+}
+
+function rpTodayId() {
+  const weekday = new Date(rpSaoPauloToday()).getUTCDay();
+  return RP_DAYS[(weekday + 6) % 7].id;
+}
+
+function rpDateFor(dayId) {
+  const index = RP_DAYS.findIndex(day => day.id === dayId);
+  if (index < 0) return '';
+  return rpIsoFromUtc(rpWeekMonday(rpSaoPauloToday()) + index * 86400000);
 }
 
 function rpRenderDays() {
   const root = document.getElementById('rpDays');
   if (!root) return;
-  root.innerHTML = RP_DAYS.map(d => {
-    const n = rpDayCount(d.id);
-    const status = n ? `${n} ticket${n === 1 ? '' : 's'}` : 'vazio';
-    return `<button type="button" class="country-tab${d.id === rpState.day ? ' active' : ''}" data-rp-day="${d.id}">
-      <span class="country-tab-name">${rpEsc(d.name)}</span>
-      <span class="country-tab-status${n ? ' saved' : ''}">${status}</span>
+  root.innerHTML = RP_DAYS.map(day => {
+    const date = rpDateFor(day.id);
+    const label = date ? date.slice(8) + '/' + date.slice(5, 7) : '';
+    return `<button type="button" class="country-tab${day.id === rpState.day ? ' active' : ''}" data-rp-day="${day.id}" data-rp-date="${date}">
+      <span class="country-tab-name">${rpEsc(day.name)}</span>
+      <span class="country-tab-status">${label}</span>
     </button>`;
   }).join('');
 }
@@ -686,46 +700,56 @@ function rpClearWeek() {
 
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
-    const screen = document.getElementById('screen-reports');
-    if (!screen) return;
-    rpHydrate();
-    document.getElementById('rpDays').addEventListener('click', e => {
+    const days = document.getElementById('rpDays');
+    if (!days) return;
+    rpState.day = rpTodayId();
+    days.addEventListener('click', e => {
       const btn = e.target.closest('[data-rp-day]');
       if (btn) rpSetDay(btn.dataset.rpDay);
     });
-    document.getElementById('rpSlots').addEventListener('input', e => {
-      const box = e.target.closest('textarea[data-rp-slot]');
-      if (!box) return;
-      rpState.texts[rpState.day][box.dataset.rpSlot] = box.value;
-      rpSave();
-      rpUpdateSlotMeta(box.dataset.rpSlot);
-      rpRenderDays();
-      rpRenderReport();
-    });
-    document.getElementById('rpSlots').addEventListener('paste', e => {
-      const box = e.target.closest('textarea[data-rp-slot]');
-      if (!box || !e.clipboardData) return;
-      const html = e.clipboardData.getData('text/html');
-      const plain = e.clipboardData.getData('text/plain');
-      const fromHtml = rpSheetFromHtml(html);
-      const fromPlain = rpSplitSheet(plain || '');
-      const htmlW = fromHtml ? fromHtml.width : 0;
-      const plainW = fromPlain ? fromPlain.width : 0;
-      if (fromHtml && htmlW >= 2 && htmlW >= plainW) {
-        e.preventDefault();
-        box.value = rpRowsToTsv(fromHtml.rows);
-        box.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-    });
-    document.getElementById('rpClearDay').addEventListener('click', rpClearDay);
-    document.getElementById('rpClearWeek').addEventListener('click', rpClearWeek);
-    document.getElementById('rpReport').addEventListener('change', e => {
-      if (e.target.id !== 'rpHideWeekend') return;
-      rpState.hideWeekend = e.target.checked;
-      rpSave();
-      rpRenderReport();
-    });
-    document.getElementById('rpPrint').addEventListener('click', () => window.print());
+    const slots = document.getElementById('rpSlots');
+    if (slots) {
+      rpHydrate();
+      slots.addEventListener('input', e => {
+        const box = e.target.closest('textarea[data-rp-slot]');
+        if (!box) return;
+        rpState.texts[rpState.day][box.dataset.rpSlot] = box.value;
+        rpSave();
+        rpUpdateSlotMeta(box.dataset.rpSlot);
+        rpRenderDays();
+        rpRenderReport();
+      });
+      slots.addEventListener('paste', e => {
+        const box = e.target.closest('textarea[data-rp-slot]');
+        if (!box || !e.clipboardData) return;
+        const html = e.clipboardData.getData('text/html');
+        const plain = e.clipboardData.getData('text/plain');
+        const fromHtml = rpSheetFromHtml(html);
+        const fromPlain = rpSplitSheet(plain || '');
+        const htmlW = fromHtml ? fromHtml.width : 0;
+        const plainW = fromPlain ? fromPlain.width : 0;
+        if (fromHtml && htmlW >= 2 && htmlW >= plainW) {
+          e.preventDefault();
+          box.value = rpRowsToTsv(fromHtml.rows);
+          box.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      });
+      const clearDay = document.getElementById('rpClearDay');
+      const clearWeek = document.getElementById('rpClearWeek');
+      if (clearDay) clearDay.addEventListener('click', rpClearDay);
+      if (clearWeek) clearWeek.addEventListener('click', rpClearWeek);
+    }
+    const report = document.getElementById('rpReport');
+    if (report) {
+      report.addEventListener('change', e => {
+        if (e.target.id !== 'rpHideWeekend') return;
+        rpState.hideWeekend = e.target.checked;
+        rpSave();
+        rpRenderReport();
+      });
+    }
+    const print = document.getElementById('rpPrint');
+    if (print) print.addEventListener('click', () => window.print());
     rpRefresh();
   });
 }

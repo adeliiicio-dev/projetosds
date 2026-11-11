@@ -338,9 +338,11 @@ function cleanStoredNote(input) {
   const description = cleanNoteText(input.description, 4000);
   const subsidiaries = cleanSubsidiaries(input.subsidiaries);
   const id = String(input.id || '');
+  const date = String(input.date || '');
   const savedAt = typeof input.savedAt === 'string' && input.savedAt.length <= 40 ? input.savedAt : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   if (!title || !description || !subsidiaries || !/^[a-z0-9]{8,32}$/.test(id)) return null;
-  return { id, title, description, subsidiaries, savedAt };
+  return { id, date, title, description, subsidiaries, savedAt };
 }
 
 function readStore(filePath) {
@@ -369,7 +371,7 @@ function readStore(filePath) {
     ? parsed.notes.map(cleanStoredNote).filter(keep)
     : [];
   days.sort((a, b) => a.date.localeCompare(b.date) || a.user.localeCompare(b.user, 'pt'));
-  notes.sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)));
+  notes.sort((a, b) => a.date.localeCompare(b.date) || String(b.savedAt).localeCompare(String(a.savedAt)));
   return { days, notes };
 }
 
@@ -429,8 +431,9 @@ function saveNote(input, filePath) {
   const title = cleanNoteText(input && input.title, 120);
   const description = cleanNoteText(input && input.description, 4000);
   const subsidiaries = cleanSubsidiaries(input && input.subsidiaries);
-  if (!title || !description || !subsidiaries) {
-    const err = new Error('Anotação inválida. Informe título, descrição e ao menos uma subsidiary.');
+  const date = String(input && input.date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !title || !description || !subsidiaries) {
+    const err = new Error('Anotação inválida. Informe o dia, o título, a descrição e ao menos uma subsidiary.');
     err.status = 400;
     throw err;
   }
@@ -448,6 +451,7 @@ function saveNote(input, filePath) {
   }
   const note = cleanStoredNote({
     id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+    date,
     title,
     description,
     subsidiaries,

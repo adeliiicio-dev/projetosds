@@ -356,24 +356,10 @@
       <section id="screen-reports" class="screen">
         <h1>Reports</h1>
         <div id="rpGuideSemanal">
-          <p class="subtitle">Relatório semanal. Cada dia tem quatro colagens do Jira, sem cabeçalho. A ordem é Key, Summary, Status, Created, Updated, Reporter, Assignee, Time to SLA-ES1, COE_subsidiaries, Actions. Key repetida na mesma faixa conta uma vez. Nas duas tabelas, o total de tickets é o mesmo.</p>
+          <p class="subtitle">Relatório semanal. O dia marcado recebe a anotação, no mesmo arquivo das métricas salvas.</p>
 
           <div class="country-tabs" id="rpDays"></div>
 
-          <div class="section-card" id="rpPasteCard">
-            <div class="section-title">
-              <i class="bi bi-clipboard-data text-accent fs-4"></i>
-              <h4 class="m-0" id="rpDayTitle">Segunda</h4>
-            </div>
-            <p class="muted mb-3">Cole direto, sem cabeçalho. A 1ª coluna é a Key e a 9ª é COE_subsidiaries.</p>
-            <div class="rp-grid" id="rpSlots"></div>
-            <div class="d-flex flex-wrap gap-2 mt-3">
-              <button type="button" class="btn btn-outline-secondary" id="rpClearDay"><i class="bi bi-x-circle"></i> Limpar este dia</button>
-              <button type="button" class="btn btn-outline-danger" id="rpClearWeek"><i class="bi bi-trash"></i> Limpar a semana</button>
-            </div>
-          </div>
-
-          <div id="rpReport"></div>
           <p class="subtitle">Consulta somente leitura. A ferramenta só busca tickets no Jira. Ela não cria, edita, comenta nem muda status. Abra com <code>node server.js</code> e preencha o .env neste computador.</p>
 
           <form id="jrForm" class="section-card">
@@ -451,16 +437,13 @@
                 <textarea id="jrNoteBody" class="form-control" rows="4" maxlength="4000" required></textarea>
               </div>
             </div>
+            <p class="muted mb-0 mt-3" id="jrNoteDay"></p>
             <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
               <button type="submit" class="btn btn-samsung" id="jrNoteSave"><i class="bi bi-save"></i> Salvar anotação</button>
               <span class="muted" id="jrNoteStatus"></span>
             </div>
             <div id="jrNoteList" class="mt-3"></div>
           </form>
-
-          <div class="d-flex justify-content-end">
-            <button type="button" class="btn btn-samsung no-print" id="rpPrint"><i class="bi bi-printer"></i> Imprimir / PDF</button>
-          </div>
         </div>
       </section>
 
@@ -476,8 +459,8 @@
   <script src="voucher.js?v=8"></script>
   <script src="knox.js?v=3"></script>
   <script src="prioridades.js?v=10"></script>
-  <script src="reports.js?v=13"></script>
+  <script src="reports.js?v=15"></script>
   <script src="jira-search.js?v=10"></script>
-  <script src="jira-ui.js?v=13"></script>
+  <script src="jira-ui.js?v=14"></script>
 </body>
 </html>
