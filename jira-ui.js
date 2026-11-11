@@ -12,15 +12,8 @@ const JR_DAY_SHORT = (typeof RP_DAYS !== 'undefined' ? RP_DAYS : [
   { short: 'Sex' }, { short: 'Sáb' }, { short: 'Dom' }
 ]).map(day => day.short);
 
-const JR_DAY_COLORS = (typeof RP_DAY_COLORS !== 'undefined')
-  ? RP_DAY_COLORS
-  : ['#6b86ff', '#38bdf8', '#34d399', '#fbbf24', '#f87171', '#c084fc', '#fb7185'];
-
-const JR_BAND_COLORS = (typeof RP_SLOT_COLORS !== 'undefined')
-  ? RP_SLOT_COLORS
-  : ['#6b86ff', '#38bdf8', '#fbbf24', '#f87171'];
-
 const JR_USER_KEY = 'sds-report-v2-user';
+const JR_SUBS = ['Chile', 'Peru', 'Colombia', 'Mexico'];
 
 function jrLoadUser() {
   try {
@@ -53,8 +46,6 @@ const jrState = {
   period: 'current',
   range: null,
   picked: new Set(),
-  saveNote: '',
-  saving: false,
   notes: [],
   noteStatus: '',
   noteSaving: false
@@ -150,19 +141,6 @@ function jrWeekdayLabel(date) {
   return JR_DAY_SHORT[index] || '';
 }
 
-function jrRowsOnDate(rows, date) {
-  if (typeof jiraSearch === 'undefined') return [];
-  return (rows || []).map(row => {
-    const changes = ((row.payload && row.payload.statusChanges) || []).filter(change => {
-      if (change.date) return change.date === date;
-      const parts = jiraSearch.zonedParts(change.at);
-      return parts && parts.date === date;
-    });
-    if (!changes.length) return null;
-    return { ...row, payload: { ...(row.payload || {}), statusChanges: changes } };
-  }).filter(Boolean);
-}
-
 function jrCurrentUser() {
   const input = typeof document !== 'undefined' ? document.getElementById('jrUser') : null;
   return input ? input.value.trim() : '';
@@ -181,21 +159,6 @@ function jrSavedForCurrent() {
   const key = jrFoldUser(jrCurrentUser());
   if (!key) return [];
   return jrState.savedDays.filter(day => jrFoldUser(day.user) === key);
-}
-
-function jrSlice(rows, transition) {
-  const metrics = jiraSearch.metricsForRows(rows, jrCurrentUser(), transition, jrState.range);
-  return {
-    weekdays: metrics.weekdays.slice(),
-    hours: metrics.hours.slice(),
-    bands: metrics.bands.map(band => ({ label: band.label, from: band.from, to: band.to })),
-    subsidiaries: metrics.subsidiaries.map(rec => ({
-      name: rec.name,
-      days: rec.days.slice(),
-      bands: rec.bands.slice()
-    })),
-    tickets: metrics.tickets
-  };
 }
 
 function jrSliceBands(slice) {
@@ -268,11 +231,9 @@ function jrRenderMetrics() {
     host.innerHTML = '';
     return;
   }
-  const queried = hasCurrent && Array.isArray(jrState.info.queried) ? jrState.info.queried : [];
   let metrics;
   let summaryMetrics;
   let source;
-  let rangeLabel = '';
   const ownSaved = jrSavedForCurrent();
   if (jrState.period === 'saved') {
     const chosen = ownSaved.filter(day => jrState.picked.has(jrDayKey(day)));
@@ -288,12 +249,8 @@ function jrRenderMetrics() {
     summaryMetrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser(), 'all', jrState.range);
     const from = jrState.range ? jrState.range.timeFrom : '';
     const to = jrState.range ? jrState.range.timeTo : '';
-    rangeLabel = from && to ? `${from}–${to}` : '';
     source = `Números da consulta atual, no mesmo filtro da tabela, entre ${from} e ${to}.`;
   }
-  if (!rangeLabel) rangeLabel = jrSpanLabel(summaryMetrics.bands);
-  const days = JR_DAY_SHORT.map((label, index) => ({ label, value: metrics.weekdays[index] || 0 }));
-  const hours = (metrics.bands || []).map((band, index) => ({ label: band.label, value: metrics.hours[index] || 0 }));
   const noun = metrics.tickets === 1 ? 'mudança' : 'mudanças';
   const savedBoxes = ownSaved.map(day => {
     const key = jrDayKey(day);
@@ -301,12 +258,7 @@ function jrRenderMetrics() {
     const label = `${jrFmt(day.date)} ${jrWeekdayLabel(day.date)} · ${day.user}`;
     return `<label class="rp-check"><input type="checkbox" data-jr-picked="${jrEsc(key)}"${checked}${jrState.period === 'saved' ? '' : ' disabled'}> ${jrEsc(label)}</label>`;
   }).join('');
-  const saveOptions = queried.map(date => `<option value="${jrEsc(date)}">${jrEsc(`${jrFmt(date)} ${jrWeekdayLabel(date)}`)}</option>`).join('');
-  const saveRow = queried.length ? `<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
-      <select id="jrSaveDay" class="form-select form-select-sm jr-save-day" aria-label="Dia para salvar">${saveOptions}</select>
-      <button type="button" class="btn btn-sm btn-outline-secondary" id="jrSave"${jrState.saving ? ' disabled' : ''}>Salvar este dia</button>
-      <span class="muted">${jrEsc(jrState.saveNote)}</span>
-    </div>` : (jrState.saveNote ? `<p class="muted mb-3">${jrEsc(jrState.saveNote)}</p>` : '');
+  const subBoards = JR_SUBS.map(name => `<h4 class="m-0 mt-4">${jrEsc(name)}</h4>${jrMetricPair(jrSubCounts(metrics, name), metrics.bands)}`).join('');
   host.innerHTML = `<div class="section-card">
     <div class="section-title">
       <i class="bi bi-bar-chart text-accent fs-4"></i>
@@ -317,29 +269,38 @@ function jrRenderMetrics() {
       <label class="rp-check"><input type="radio" name="jrPeriod" value="saved"${jrState.period === 'saved' ? ' checked' : ''}${ownSaved.length ? '' : ' disabled'}> Dias salvos</label>
     </div>
     <div class="jr-days mb-3">${savedBoxes}</div>
-    ${saveRow}
     <p class="muted mb-3">${metrics.tickets} ${noun} dele na faixa escolhida, no horário de Brasília. ${jrEsc(source)} Cada mudança entra em um dia e em uma faixa.</p>
-    <div class="rp-pair">
-      <div class="rp-pane">${jrCountTable('Dia', days)}</div>
-      <div class="rp-pane">${jrCountTable('Hora', hours)}</div>
-    </div>
-    ${jrCoeBlock(metrics, rangeLabel)}
+    <h4 class="m-0 mb-3">Todas Subs</h4>
+    ${jrMetricPair(metrics, metrics.bands)}
+    ${subBoards}
     ${jrSummary(summaryMetrics)}
   </div>`;
 }
 
-function jrClock(minutes) {
-  const hour = Math.floor(Number(minutes) / 60);
-  const minute = Number(minutes) % 60;
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+function jrFoldSub(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
-function jrSpanLabel(bands) {
-  const list = Array.isArray(bands) ? bands.filter(band => Number.isFinite(Number(band.from)) && Number.isFinite(Number(band.to))) : [];
-  if (!list.length) return '';
-  const from = Math.min(...list.map(band => Number(band.from)));
-  const to = Math.max(...list.map(band => Number(band.to)));
-  return `${jrClock(from)}–${jrClock(to)}`;
+function jrSubCounts(metrics, name) {
+  const key = jrFoldSub(name);
+  const days = [0, 0, 0, 0, 0, 0, 0];
+  const hours = (metrics.bands || []).map(() => 0);
+  (metrics.subsidiaries || []).forEach(rec => {
+    const parts = String(rec.name || '').split(',').map(jrFoldSub).filter(Boolean);
+    if (!parts.includes(key)) return;
+    (rec.days || []).forEach((count, index) => { if (index < 7) days[index] += count || 0; });
+    (rec.bands || []).forEach((count, index) => { if (index < hours.length) hours[index] += count || 0; });
+  });
+  return { weekdays: days, hours };
+}
+
+function jrMetricPair(counts, bands) {
+  const days = JR_DAY_SHORT.map((label, index) => ({ label, value: (counts.weekdays || [])[index] || 0 }));
+  const hours = (bands || []).map((band, index) => ({ label: band.label, value: (counts.hours || [])[index] || 0 }));
+  return `<div class="rp-pair">
+    <div class="rp-pane">${jrCountTable('Dia', days)}</div>
+    <div class="rp-pane">${jrCountTable('Hora', hours)}</div>
+  </div>`;
 }
 
 function jrSummary(metrics) {
@@ -348,66 +309,6 @@ function jrSummary(metrics) {
     <p class="mb-1"><strong>Sub com mais tickets noturnos:</strong> ${jrEsc(leaders.nightSubsidiary)}</p>
     <p class="mb-0"><strong>Faixa de horário com mais tickets:</strong> ${jrEsc(leaders.busiestBand)}</p>
   </div>`;
-}
-
-function jrCoeTable(first, columns, subs, pick) {
-  if (!subs.length) return '<p class="muted mb-0">Nenhum COE_subsidiaries ainda.</p>';
-  const peaks = columns.map(col => subs.reduce((max, rec) => Math.max(max, pick(rec, col) || 0), 0));
-  const body = subs.map(rec => {
-    const cells = columns.map((col, index) => {
-      const value = pick(rec, col) || 0;
-      const win = peaks[index] > 0 && value === peaks[index] ? ' rp-win' : '';
-      return `<td class="num${win}">${value}</td>`;
-    }).join('');
-    const total = columns.reduce((sum, col) => sum + (pick(rec, col) || 0), 0);
-    return `<tr><th class="rp-name">${jrEsc(rec.name)}</th>${cells}<td class="num">${total}</td></tr>`;
-  }).join('');
-  const foot = columns.map(col => `<th class="num">${subs.reduce((sum, rec) => sum + (pick(rec, col) || 0), 0)}</th>`).join('');
-  const grand = subs.reduce((sum, rec) => sum + columns.reduce((inner, col) => inner + (pick(rec, col) || 0), 0), 0);
-  const head = columns.map(col => `<th>${jrEsc(col.label)}</th>`).join('');
-  return `<table class="table table-sm table-dark table-bordered mb-0 rp-table">
-    <thead><tr><th>${jrEsc(first)}</th>${head}<th>Total</th></tr></thead>
-    <tbody>${body}</tbody>
-    <tfoot><tr><th>Total</th>${foot}<th class="num">${grand}</th></tr></tfoot>
-  </table>`;
-}
-
-function jrCoeChart(subs, columns, series, pick, title) {
-  if (typeof rpMatrixChart !== 'function') return '';
-  const groups = (subs.length ? subs : [{ name: '—' }]).map(rec => ({
-    label: rec.name,
-    values: columns.map(col => pick(rec, col) || 0)
-  }));
-  return rpMatrixChart(groups, series, title);
-}
-
-function jrCoeBlock(metrics, rangeLabel) {
-  const subs = metrics.subsidiaries || [];
-  const dayColumns = JR_DAY_SHORT.map((label, index) => ({ label, index }));
-  const daySeries = dayColumns.map((col, index) => ({ label: col.label, color: JR_DAY_COLORS[index] }));
-  const bandColumns = (metrics.bands || []).map((band, index) => ({ label: band.label, index }));
-  const bandSeries = bandColumns.map((col, index) => ({
-    label: col.label,
-    color: JR_BAND_COLORS[index % JR_BAND_COLORS.length]
-  }));
-  const dayPick = (rec, col) => (rec.days || [])[col.index] || 0;
-  const bandPick = (rec, col) => (rec.bands || [])[col.index] || 0;
-  const dayTitle = `Quantidade de tickets por dia no horário: ${rangeLabel || '—'}`;
-  const bandTitle = 'Quantidade de tickets por Subs em cada faixa de horário';
-  return `<div class="section-title mt-4">
-      <h4 class="m-0">${jrEsc(dayTitle)}</h4>
-    </div>
-    <div class="rp-pair">
-      <div class="rp-pane"><div class="table-wrap rp-fit">${jrCoeTable('COE', dayColumns, subs, dayPick)}</div></div>
-      <div class="rp-pane"><div class="rp-chart-wrap">${jrCoeChart(subs, dayColumns, daySeries, dayPick, dayTitle)}</div></div>
-    </div>
-    <div class="section-title mt-4">
-      <h4 class="m-0">${jrEsc(bandTitle)}</h4>
-    </div>
-    <div class="rp-pair">
-      <div class="rp-pane"><div class="table-wrap rp-fit">${jrCoeTable('SUB', bandColumns, subs, bandPick)}</div></div>
-      <div class="rp-pane"><div class="rp-chart-wrap">${jrCoeChart(subs, bandColumns, bandSeries, bandPick, bandTitle)}</div></div>
-    </div>`;
 }
 
 function jrMoveText(row, transition) {
@@ -671,46 +572,6 @@ async function jrSaveNote(event) {
   }
 }
 
-async function jrSaveSelected() {
-  if (jrState.saving || !jrState.info) return;
-  const select = document.getElementById('jrSaveDay');
-  const date = select ? select.value : '';
-  const user = document.getElementById('jrUser').value.trim();
-  if (!date || !user) {
-    jrState.saveNote = 'Escolha o dia da consulta atual.';
-    jrRenderResults();
-    return;
-  }
-  const dated = jrRowsOnDate(jrState.issues, date);
-  jrState.saving = true;
-  jrState.saveNote = '';
-  jrRenderResults();
-  try {
-    const response = await fetch('/api/jira/metrics', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
-        date,
-        user,
-        counts: {
-          all: jrSlice(dated, 'all'),
-          todo: jrSlice(dated, 'todo'),
-          clarification: jrSlice(dated, 'clarification')
-        }
-      })
-    });
-    const data = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(data && data.error || 'Não foi possível salvar o dia.');
-    if (data && data.day) jrMergeSaved([data.day]);
-    jrState.saveNote = `${jrFmt(date)} salvo.`;
-  } catch (err) {
-    jrState.saveNote = err.message || 'Não foi possível salvar o dia.';
-  } finally {
-    jrState.saving = false;
-    jrRenderResults();
-  }
-}
-
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
     const screen = document.getElementById('jrForm');
@@ -780,10 +641,6 @@ if (typeof document !== 'undefined') {
       if (picked.checked) jrState.picked.add(picked.dataset.jrPicked);
       else jrState.picked.delete(picked.dataset.jrPicked);
       jrRenderResults();
-    });
-    metrics.addEventListener('click', event => {
-      const button = event.target.closest('#jrSave');
-      if (button) jrSaveSelected();
     });
   });
 }

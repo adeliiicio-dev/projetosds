@@ -740,7 +740,12 @@ function testSources() {
   assert.equal(/\/rest\/api\/2\/issue\/[^'"`\s]*\/changelog/.test(src), false);
   const ui = fs.readFileSync(path.join(__dirname, 'jira-ui.js'), 'utf8');
   assert.equal(ui.includes('rpBars'), false);
-  assert.equal(ui.includes('rpMatrixChart'), true);
+  assert.equal(ui.includes('rpMatrixChart'), false);
+  assert.match(ui, /Todas Subs/);
+  assert.match(ui, /\['Chile', 'Peru', 'Colombia', 'Mexico'\]/);
+  assert.equal(ui.includes('Salvar este dia'), false);
+  assert.equal(ui.includes('Quantidade de tickets por dia no horário'), false);
+  assert.equal(ui.includes('Quantidade de tickets por Subs em cada faixa de horário'), false);
   assert.equal(/<svg class="rp-chart"/.test(ui), false);
   assert.equal(src.includes('foram alterados'), false);
   assert.equal(src.includes('O Jira devolveu'), false);
