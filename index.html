@@ -423,6 +423,14 @@
                 <label class="form-label" for="jrNoteTitle">Título</label>
                 <input id="jrNoteTitle" class="form-control" maxlength="120" required>
               </div>
+              <div class="col-lg-3">
+                <label class="form-label" for="jrNoteDate">Data</label>
+                <input id="jrNoteDate" class="form-control" type="date" required>
+              </div>
+              <div class="col-lg-3">
+                <span class="form-label d-block">Priority request</span>
+                <label class="rp-check mt-2"><input type="checkbox" id="jrNotePriority"> Priority request</label>
+              </div>
               <div class="col-lg-6">
                 <span class="form-label d-block">Subsidiary</span>
                 <div class="jr-days" id="jrNoteSubs">
@@ -461,6 +469,6 @@
   <script src="prioridades.js?v=10"></script>
   <script src="reports.js?v=15"></script>
   <script src="jira-search.js?v=11"></script>
-  <script src="jira-ui.js?v=17"></script>
+  <script src="jira-ui.js?v=18"></script>
 </body>
 </html>

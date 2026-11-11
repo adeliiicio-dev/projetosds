@@ -14,6 +14,12 @@ const JR_DAY_SHORT = (typeof RP_DAYS !== 'undefined' ? RP_DAYS : [
 
 const JR_USER_KEY = 'sds-report-v2-user';
 const JR_SUBS = ['Chile', 'Peru', 'Colombia', 'Mexico'];
+const JR_SLIDE = [
+  { code: 'SAMCOL', sub: 'Colombia' },
+  { code: 'SECH', sub: 'Chile' },
+  { code: 'SEM', sub: 'Mexico' },
+  { code: 'SEPR', sub: 'Peru' }
+];
 
 function jrLoadUser() {
   try {
@@ -326,6 +332,49 @@ function jrStatsFor(name) {
   return { todo: sum('todo'), clarification: sum('clarification'), corrected: jrBlockStats(rows, name).corrected };
 }
 
+function jrPeriodDates() {
+  if (jrState.period === 'saved') {
+    return jrSavedForCurrent().filter(day => jrState.picked.has(jrDayKey(day))).map(day => day.date);
+  }
+  const info = jrState.info || {};
+  const queried = Array.isArray(info.queried) ? info.queried : [];
+  const saved = Array.isArray(info.saved) ? info.saved.map(day => day.date) : [];
+  return [...new Set(queried.concat(saved))];
+}
+
+function jrPriorityCount(sub, dates) {
+  const wanted = new Set(dates);
+  return (jrState.notes || []).filter(note => (
+    note && note.priority === true && wanted.has(note.date) && Array.isArray(note.subsidiaries) && note.subsidiaries.includes(sub)
+  )).length;
+}
+
+function jrSlideTable() {
+  const dates = jrPeriodDates();
+  const rows = JR_SLIDE.map(item => {
+    const stats = jrStatsFor(item.sub);
+    return {
+      code: item.code,
+      tickets: stats.todo + stats.clarification,
+      todo: stats.todo,
+      clarification: stats.clarification,
+      priority: jrPriorityCount(item.sub, dates)
+    };
+  });
+  const total = rows.reduce((sum, row) => ({
+    tickets: sum.tickets + row.tickets,
+    todo: sum.todo + row.todo,
+    clarification: sum.clarification + row.clarification,
+    priority: sum.priority + row.priority
+  }), { tickets: 0, todo: 0, clarification: 0, priority: 0 });
+  const body = rows.map(row => `<tr><th>${jrEsc(row.code)}</th><td class="num">${row.tickets}</td><td class="num">${row.todo}</td><td class="num">${row.clarification}</td><td class="num">${row.priority}</td></tr>`).join('');
+  return `<div class="table-wrap rp-fit"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
+    <thead><tr><th>Sub</th><th>Tickets (quantidade)</th><th>To do</th><th>Clarification</th><th>Priority request</th></tr></thead>
+    <tbody>${body}</tbody>
+    <tfoot><tr><th>Total</th><th class="num">${total.tickets}</th><th class="num">${total.todo}</th><th class="num">${total.clarification}</th><th class="num">${total.priority}</th></tr></tfoot>
+  </table></div>`;
+}
+
 function jrExtraTables(name) {
   const stats = jrStatsFor(name);
   const types = jrCountTable('Tipo de movimentação', [
@@ -335,9 +384,15 @@ function jrExtraTables(name) {
   const fixed = jrCountTable('Tickets corrigidos', [
     { label: 'Clarification → Request → To do', value: stats.corrected }
   ], 'Tickets');
+  if (name) {
+    return `<div class="rp-pair mt-3">
+      <div class="rp-pane">${types}</div>
+      <div class="rp-pane">${fixed}</div>
+    </div>`;
+  }
   return `<div class="rp-pair mt-3">
-    <div class="rp-pane">${types}</div>
-    <div class="rp-pane">${fixed}</div>
+    <div class="rp-pane">${types}<div class="mt-3">${fixed}</div></div>
+    <div class="rp-pane">${jrSlideTable()}</div>
   </div>`;
 }
 
@@ -623,38 +678,41 @@ function jrSelectedDay() {
   };
 }
 
+function jrNoteDateValue() {
+  const input = document.getElementById('jrNoteDate');
+  if (input && /^\d{4}-\d{2}-\d{2}$/.test(input.value)) return input.value;
+  return jrSelectedDay().date;
+}
+
+function jrSyncNoteDate(force) {
+  const input = document.getElementById('jrNoteDate');
+  const selected = jrSelectedDay();
+  if (!input || !selected.date) return;
+  if (force || !input.value) input.value = selected.date;
+}
+
 function jrRenderNotes() {
   const status = document.getElementById('jrNoteStatus');
   const list = document.getElementById('jrNoteList');
   const dayLine = document.getElementById('jrNoteDay');
-  const selected = jrSelectedDay();
-  const saved = selected.date
-    ? jrState.savedDays.filter(day => day.date === selected.date)
-    : [];
+  const date = jrNoteDateValue();
   if (dayLine) {
-    if (!selected.date) {
-      dayLine.textContent = '';
-    } else {
-      const metrics = saved.length
-        ? `Métricas salvas neste dia: ${saved.map(day => day.user).join(', ')}.`
-        : 'Nenhuma métrica salva neste dia ainda.';
-      dayLine.textContent = `Esta anotação entra em ${selected.name}, ${jrFmt(selected.date)}, junto com as métricas desse dia. ${metrics}`;
-    }
+    dayLine.textContent = date ? `Esta anotação entra em ${jrFmt(date)}.` : 'Informe a data da anotação.';
   }
   if (status) status.textContent = jrState.noteStatus;
   if (!list) return;
-  const notes = (Array.isArray(jrState.notes) ? jrState.notes : []).filter(note => note.date === selected.date);
-  if (!selected.date) {
+  const notes = (Array.isArray(jrState.notes) ? jrState.notes : []).filter(note => note.date === date);
+  if (!date) {
     list.innerHTML = '';
     return;
   }
   if (!notes.length) {
-    list.innerHTML = '<p class="muted mb-0">Nenhuma anotação neste dia.</p>';
+    list.innerHTML = '<p class="muted mb-0">Nenhuma anotação nesta data.</p>';
     return;
   }
   list.innerHTML = notes.map(note => `<article class="border rounded p-3 mb-2">
       <strong>${jrEsc(note.title)}</strong>
-      <span class="muted"> · ${jrEsc(jrFmt(note.date))} · ${jrEsc((note.subsidiaries || []).join(', '))}</span>
+      <span class="muted"> · ${jrEsc(jrFmt(note.date))} · ${jrEsc((note.subsidiaries || []).join(', '))}${note.priority ? ' · Priority request' : ''}</span>
       <p class="mb-0 mt-2">${jrEsc(note.description).replace(/\n/g, '<br>')}</p>
     </article>`).join('');
 }
@@ -665,9 +723,10 @@ async function jrSaveNote(event) {
   const title = document.getElementById('jrNoteTitle').value.trim();
   const description = document.getElementById('jrNoteBody').value.trim();
   const subsidiaries = [...document.querySelectorAll('input[name="jrNoteSub"]:checked')].map(box => box.value);
-  const selected = jrSelectedDay();
-  if (!selected.date || !title || !description || !subsidiaries.length) {
-    jrState.noteStatus = 'Informe título, descrição e ao menos uma subsidiary.';
+  const date = jrNoteDateValue();
+  const priority = !!document.getElementById('jrNotePriority').checked;
+  if (!date || !title || !description || !subsidiaries.length) {
+    jrState.noteStatus = 'Informe a data, o título, a descrição e ao menos uma subsidiary.';
     jrRenderNotes();
     return;
   }
@@ -678,7 +737,7 @@ async function jrSaveNote(event) {
     const response = await fetch('/api/jira/notes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ date: selected.date, title, description, subsidiaries })
+      body: JSON.stringify({ date, title, description, subsidiaries, priority })
     });
     const data = await response.json();
     if (!response.ok) throw new Error((data && data.error) || 'Não foi possível salvar a anotação.');
@@ -686,7 +745,9 @@ async function jrSaveNote(event) {
     document.getElementById('jrNoteTitle').value = '';
     document.getElementById('jrNoteBody').value = '';
     document.querySelectorAll('input[name="jrNoteSub"]').forEach(box => { box.checked = false; });
-    jrState.noteStatus = `Anotação salva em ${jrFmt(selected.date)}.`;
+    document.getElementById('jrNotePriority').checked = false;
+    jrState.noteStatus = `Anotação salva em ${jrFmt(date)}.`;
+    jrRenderResults();
   } catch (err) {
     jrState.noteStatus = err.message || 'Não foi possível salvar a anotação.';
   } finally {
@@ -706,6 +767,7 @@ if (typeof document !== 'undefined') {
     if (savedUser) document.getElementById('jrUser').value = savedUser;
     jrRenderSlots();
     jrRenderDays();
+    jrSyncNoteDate(true);
     jrRenderResults();
     jrLoadSaved();
 
@@ -742,7 +804,12 @@ if (typeof document !== 'undefined') {
     document.getElementById('jrForm').addEventListener('submit', jrConsult);
     document.getElementById('jrNoteForm').addEventListener('submit', jrSaveNote);
     const reportDays = document.getElementById('rpDays');
-    if (reportDays) reportDays.addEventListener('click', () => jrRenderNotes());
+    if (reportDays) reportDays.addEventListener('click', () => {
+      jrSyncNoteDate(true);
+      jrRenderNotes();
+    });
+    const noteDate = document.getElementById('jrNoteDate');
+    if (noteDate) noteDate.addEventListener('input', jrRenderNotes);
     const applyMove = event => {
       const radio = event.target.closest('input[name="jrMove"]');
       if (!radio) return;

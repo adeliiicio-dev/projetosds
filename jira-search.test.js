@@ -736,6 +736,7 @@ async function testSavedDays() {
     assert.equal(note.status, 200);
     assert.equal(note.body.includes(token), false);
     assert.equal(JSON.parse(note.body).note.date, '2026-11-10');
+    assert.equal(JSON.parse(note.body).note.priority, false);
     assert.deepEqual(JSON.parse(note.body).note.subsidiaries, ['Chile', 'Mexico']);
     const afterNote = JSON.parse((await requestOnce(port, 'GET', '/api/jira/metrics')).body);
     assert.equal(afterNote.notes.length, 1);
@@ -770,6 +771,21 @@ async function testSavedDays() {
     assert.equal(stored.includes(token), false);
     assert.equal(stored.includes('Brasil'), false);
     assert.equal(JSON.parse(stored).notes.length, 1);
+
+    const priority = await requestOnce(port, 'POST', '/api/jira/notes', JSON.stringify({
+      date: '2026-11-11',
+      title: 'Prioridade',
+      description: 'Colombia pediu prioridade',
+      subsidiaries: ['Colombia'],
+      priority: true
+    }));
+    assert.equal(priority.status, 200);
+    assert.equal(JSON.parse(priority.body).note.priority, true);
+    assert.equal(JSON.parse(priority.body).note.date, '2026-11-11');
+    assert.deepEqual(JSON.parse(priority.body).note.subsidiaries, ['Colombia']);
+    const withPriority = JSON.parse(fs.readFileSync(metricsPath, 'utf8'));
+    assert.equal(withPriority.notes.some(item => item.priority === true && item.date === '2026-11-11'), true);
+    assert.equal(withPriority.days.length, 2);
 
     const hidden = await requestOnce(port, 'GET', '/data/report-v2-metrics.json');
     assert.equal(hidden.status, 404);

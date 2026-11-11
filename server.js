@@ -342,7 +342,7 @@ function cleanStoredNote(input) {
   const savedAt = typeof input.savedAt === 'string' && input.savedAt.length <= 40 ? input.savedAt : '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   if (!title || !description || !subsidiaries || !/^[a-z0-9]{8,32}$/.test(id)) return null;
-  return { id, date, title, description, subsidiaries, savedAt };
+  return { id, date, title, description, subsidiaries, priority: input.priority === true, savedAt };
 }
 
 function readStore(filePath) {
@@ -455,6 +455,7 @@ function saveNote(input, filePath) {
     title,
     description,
     subsidiaries,
+    priority: input && input.priority === true,
     savedAt: new Date().toISOString()
   });
   if (!note) {
