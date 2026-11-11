@@ -24,11 +24,11 @@ function issue(key, extra) {
       updated: extra.updated
     },
     changelog: {
-      histories: extra.history === null ? [] : [{
+      histories: extra.history === null ? [] : (extra.histories || [{
         created: extra.at,
         author,
         items: extra.items || [{ field: extra.field || 'status', fromString: extra.from, toString: extra.to }]
-      }]
+      }])
     }
   };
 }
@@ -96,7 +96,7 @@ async function testWindowsAndMoves() {
     issue('LC-10', { from: 'Request', to: 'To Do', at: '2026-11-10T18:14:00.000-0300', updated: '2026-11-10T18:14:00.000-0300', author: null, summary: 'Sem autor' }),
     issue('LC-11', { field: 'summary', from: 'A', to: 'B', at: '2026-11-10T18:16:00.000-0300', updated: '2026-11-10T18:16:00.000-0300', summary: 'Não é status' })
   ], { user: 'Ade', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
-  assert.deepEqual(named.rows.map(row => row.key), ['LC-8', 'LC-9', 'LC-10']);
+  assert.deepEqual(named.rows.map(row => row.key), ['LC-8', 'LC-9']);
   assert.equal(named.rows[0].kinds.includes('todo'), true);
   assert.equal(named.rows[0].moveText.includes('16705'), false);
   assert.equal(named.rows[0].moveText.includes('Adelino'), false);
@@ -116,6 +116,46 @@ async function testWindowsAndMoves() {
   const other = jira.buildRows(five, { user: 'Bruno', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
   assert.equal(other.rows.length, 0);
   assert.equal(other.dropped, 5);
+
+  const mixed = jira.buildRows([
+    issue('LC-12', {
+      summary: 'Misto',
+      updated: '2026-11-10T18:45:00.000-0300',
+      histories: [
+        {
+          created: '2026-11-10T18:15:00.000-0300',
+          author: { displayName: 'Adelino Souza' },
+          items: [{ field: 'status', fromString: 'Request [ 16705 ]', toString: 'To do [ 10000 ]' }]
+        },
+        {
+          created: '2026-11-10T18:45:00.000-0300',
+          author: { displayName: 'Bruno Costa' },
+          items: [{ field: 'status', fromString: 'To do', toString: 'Done' }]
+        }
+      ]
+    })
+  ], { user: 'Ade', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
+  assert.deepEqual(mixed.rows.map(row => row.key), ['LC-12']);
+  assert.match(mixed.rows[0].moveText, /Request → To do/);
+  assert.match(mixed.rows[0].moveText, /18:15/);
+  assert.equal(mixed.rows[0].moveText.includes('18:45'), false);
+  assert.equal(mixed.rows[0].moveText.includes('Done'), false);
+  assert.equal(mixed.rows[0].moveText.includes('Bruno'), false);
+  assert.equal(mixed.rows[0].moveText.includes('Adelino'), false);
+  const mixedMetrics = jira.metricsForRows(mixed.rows, 'Ade');
+  assert.equal(mixedMetrics.tickets, 1);
+  assert.deepEqual(mixedMetrics.hours, [1, 0, 0, 0]);
+  const foreign = jira.metricsForRows([{
+    key: 'LC-12',
+    payload: {
+      statusChanges: [
+        { from: 'Request', to: 'To do', at: '2026-11-10T18:15:00.000-0300', author: 'Adelino Souza' },
+        { from: 'To do', to: 'Done', at: '2026-11-10T18:45:00.000-0300', author: 'Bruno Costa' }
+      ]
+    }
+  }], 'Ade');
+  assert.equal(foreign.tickets, 1);
+  assert.equal(foreign.hours[0], 1);
 
   const twice = {
     key: 'LC-30',

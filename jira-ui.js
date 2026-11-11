@@ -161,8 +161,28 @@ function jrRowsOnDate(rows, date) {
   }).filter(Boolean);
 }
 
+function jrCurrentUser() {
+  const input = typeof document !== 'undefined' ? document.getElementById('jrUser') : null;
+  return input ? input.value.trim() : '';
+}
+
+function jrFoldUser(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function jrSavedForCurrent() {
+  const key = jrFoldUser(jrCurrentUser());
+  if (!key) return [];
+  return jrState.savedDays.filter(day => jrFoldUser(day.user) === key);
+}
+
 function jrSlice(rows) {
-  const metrics = jiraSearch.metricsForRows(rows);
+  const metrics = jiraSearch.metricsForRows(rows, jrCurrentUser());
   return { weekdays: metrics.weekdays.slice(), hours: metrics.hours.slice(), tickets: metrics.tickets };
 }
 
@@ -188,10 +208,6 @@ function jrCountTable(caption, items) {
   </table></div>`;
 }
 
-function jrChosenSaved() {
-  return jrState.savedDays.filter(day => jrState.picked.has(jrDayKey(day)));
-}
-
 function jrRenderMetrics() {
   const host = document.getElementById('jrMetrics');
   if (!host) return;
@@ -207,21 +223,22 @@ function jrRenderMetrics() {
   const queried = hasCurrent && Array.isArray(jrState.info.queried) ? jrState.info.queried : [];
   let metrics;
   let source;
+  const ownSaved = jrSavedForCurrent();
   if (jrState.period === 'saved') {
-    const chosen = jrChosenSaved();
+    const chosen = ownSaved.filter(day => jrState.picked.has(jrDayKey(day)));
     const slices = chosen.map(day => (day.counts && day.counts[jrState.transition]) || (day.counts && day.counts.all) || { weekdays: [], hours: [], tickets: 0 });
     metrics = jrSumSlices(slices);
     source = chosen.length
-      ? 'Números lidos do arquivo, sem nova consulta ao Jira.'
-      : 'Escolha ao menos um dia salvo.';
+      ? 'Números lidos do arquivo, só das mudanças dessa pessoa, sem nova consulta ao Jira.'
+      : 'Escolha ao menos um dia salvo dessa pessoa.';
   } else {
-    metrics = jiraSearch.metricsForRows(jrFilter(jrState.issues, jrState.transition));
-    source = 'Números da consulta atual, entre 18h e 22h.';
+    metrics = jiraSearch.metricsForRows(jrFilter(jrState.issues, jrState.transition), jrCurrentUser());
+    source = 'Números da consulta atual, só das mudanças dessa pessoa, entre 18h e 22h.';
   }
   const days = JR_DAY_SHORT.map((label, index) => ({ label, value: metrics.weekdays[index] || 0 }));
   const hours = JR_SLOTS.map((slot, index) => ({ label: slot.label, value: metrics.hours[index] || 0 }));
   const noun = metrics.tickets === 1 ? 'ticket' : 'tickets';
-  const savedBoxes = jrState.savedDays.map(day => {
+  const savedBoxes = ownSaved.map(day => {
     const key = jrDayKey(day);
     const checked = jrState.picked.has(key) ? ' checked' : '';
     const label = `${jrFmt(day.date)} ${jrWeekdayLabel(day.date)} · ${day.user}`;
@@ -240,7 +257,7 @@ function jrRenderMetrics() {
     </div>
     <div class="jr-days mb-2">
       <label class="rp-check"><input type="radio" name="jrPeriod" value="current"${jrState.period === 'current' ? ' checked' : ''}${hasCurrent ? '' : ' disabled'}> Consulta atual</label>
-      <label class="rp-check"><input type="radio" name="jrPeriod" value="saved"${jrState.period === 'saved' ? ' checked' : ''}${jrState.savedDays.length ? '' : ' disabled'}> Dias salvos</label>
+      <label class="rp-check"><input type="radio" name="jrPeriod" value="saved"${jrState.period === 'saved' ? ' checked' : ''}${ownSaved.length ? '' : ' disabled'}> Dias salvos</label>
     </div>
     <div class="jr-days mb-3">${savedBoxes}</div>
     ${saveRow}
@@ -509,6 +526,7 @@ if (typeof document !== 'undefined') {
     });
     document.getElementById('jrFrom').addEventListener('input', jrRenderSlots);
     document.getElementById('jrTo').addEventListener('input', jrRenderSlots);
+    document.getElementById('jrUser').addEventListener('input', jrRenderResults);
     document.getElementById('jrForm').addEventListener('submit', jrConsult);
     const applyMove = event => {
       const radio = event.target.closest('input[name="jrMove"]');

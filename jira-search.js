@@ -191,19 +191,19 @@ function inChosenWindow(iso, windows) {
 function authorBlob(author) {
   if (!author) return '';
   if (typeof author === 'string') return author;
-  return ['displayName', 'name', 'key', 'accountId', 'emailAddress']
+  return ['displayName', 'name', 'key']
     .map(key => author[key] || '')
     .filter(Boolean)
     .join(' ');
 }
 
 function authorMatches(user, author) {
-  if (samePerson(user, author)) return true;
   const wanted = foldStatus(user);
   const blob = foldStatus(authorBlob(author));
-  if (!blob) return true;
-  const words = wanted.split(' ').filter(word => word.length >= 2);
-  const authorWords = blob.split(' ').filter(word => word.length >= 2);
+  if (!wanted || !blob) return false;
+  if (samePerson(user, author)) return true;
+  const words = wanted.split(' ').filter(word => word.length >= 3);
+  const authorWords = blob.split(' ').filter(word => word.length >= 3);
   if (!words.length || !authorWords.length) return false;
   return words.some(word => authorWords.some(part => (
     part === word || part.startsWith(word) || word.startsWith(part)
@@ -283,16 +283,18 @@ function weekdayIndex(date) {
   return (utc.getUTCDay() + 6) % 7;
 }
 
-function metricsForRows(rows) {
+function metricsForRows(rows, user) {
   const weekdays = [0, 0, 0, 0, 0, 0, 0];
   const hours = [0, 0, 0, 0];
   const seenDay = weekdays.map(() => new Set());
   const seenHour = hours.map(() => new Set());
   const seen = new Set();
+  const wanted = foldStatus(user);
   (Array.isArray(rows) ? rows : []).forEach(row => {
     const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
     const id = row && row.key ? row.key : '';
     changes.forEach((change, index) => {
+      if (wanted && !authorMatches(user, change && change.author)) return;
       const parts = zonedParts(change && change.at);
       if (!parts || parts.minutes < 18 * 60 || parts.minutes >= 22 * 60) return;
       const day = weekdayIndex(parts.date);
