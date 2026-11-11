@@ -179,13 +179,27 @@ function wallClock(iso) {
   return { date: match[1], minutes: Number(match[2]) * 60 + Number(match[3]) };
 }
 
-function inChosenWindow(iso, windows) {
-  if (instantInWindows(iso, windows)) return true;
-  const wall = wallClock(iso);
-  if (!wall) return false;
+function windowHit(parts, windows) {
+  if (!parts) return false;
   return windows.some(window => (
-    window.date === wall.date && wall.minutes >= window.start && wall.minutes < window.end
+    window.date === parts.date && parts.minutes >= window.start && parts.minutes < window.end
   ));
+}
+
+function qualifyingParts(iso, windows) {
+  const zoned = zonedParts(iso);
+  if (windowHit(zoned, windows)) return zoned;
+  const wall = wallClock(iso);
+  if (windowHit(wall, windows)) return wall;
+  return null;
+}
+
+function formatParts(parts) {
+  if (!parts || !parts.date) return '';
+  const [, month, day] = parts.date.split('-');
+  const hour = String(Math.floor(parts.minutes / 60)).padStart(2, '0');
+  const minute = String(parts.minutes % 60).padStart(2, '0');
+  return `${day}/${month}, ${hour}:${minute}`;
 }
 
 function authorNames(author) {
@@ -275,8 +289,22 @@ function formatWhen(iso) {
 
 function oneMove(move) {
   const label = move.status ? `${move.from || '—'} → ${move.to || '—'}` : `Alterou ${move.field || 'campo'}`;
-  const when = move.at ? formatWhen(move.at) : '';
+  const when = move.parts ? formatParts(move.parts) : (move.at ? formatWhen(move.at) : '');
   return when ? `${label} · ${when}` : label;
+}
+
+function changeKind(change) {
+  if (!change) return '';
+  if (change.kind === 'todo' || change.kind === 'clarification') return change.kind;
+  return statusMoveKind(change.from, change.to);
+}
+
+function metricParts(change) {
+  if (!change) return null;
+  if (change.date && Number.isFinite(Number(change.minutes))) {
+    return { date: change.date, minutes: Number(change.minutes) };
+  }
+  return zonedParts(change.at);
 }
 
 function weekdayIndex(date) {
@@ -286,15 +314,18 @@ function weekdayIndex(date) {
   return (utc.getUTCDay() + 6) % 7;
 }
 
-function metricsForRows(rows, user) {
+function metricsForRows(rows, user, transition) {
   const weekdays = [0, 0, 0, 0, 0, 0, 0];
   const hours = [0, 0, 0, 0];
   const wanted = foldStatus(user);
   (Array.isArray(rows) ? rows : []).forEach(row => {
     const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
     changes.forEach(change => {
-      if (wanted && !authorMatches(user, change && change.author)) return;
-      const parts = zonedParts(change && change.at);
+      const kind = changeKind(change);
+      if (kind !== 'todo' && kind !== 'clarification') return;
+      if ((transition === 'todo' || transition === 'clarification') && kind !== transition) return;
+      if (wanted && change && change.author && !authorMatches(user, change.author)) return;
+      const parts = metricParts(change);
       if (!parts || parts.minutes < 18 * 60 || parts.minutes >= 22 * 60) return;
       const day = weekdayIndex(parts.date);
       const hour = Math.floor(parts.minutes / 60) - 18;
@@ -308,32 +339,35 @@ function metricsForRows(rows, user) {
 }
 
 function countMoves(rows) {
-  const moves = [];
+  let todo = 0;
+  let clarification = 0;
   (Array.isArray(rows) ? rows : []).forEach(row => {
     const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
-    changes.forEach(change => moves.push(change));
+    changes.forEach(change => {
+      const kind = changeKind(change);
+      if (kind === 'todo') todo += 1;
+      else if (kind === 'clarification') clarification += 1;
+    });
   });
-  const todo = moves.filter(move => move.kind === 'todo').length;
-  const clarification = moves.filter(move => move.kind === 'clarification').length;
-  return {
-    all: moves.length,
-    todo,
-    clarification,
-    neither: moves.length - todo - clarification
-  };
+  return { all: todo + clarification, todo, clarification };
 }
 
 function toRow(issue, windows, user) {
   const fields = issue && issue.fields ? issue.fields : {};
-  const history = statusHistory(issue).map(move => ({
-    ...move,
-    inWindow: move.at ? inChosenWindow(move.at, windows) : false,
-    byUser: authorMatches(user, move.author)
-  }));
-  const mine = history.filter(move => move.status && move.inWindow && move.byUser);
-  const statusMoves = mine;
-  const kinds = [...new Set(statusMoves.map(move => move.kind).filter(Boolean))];
-  const shown = statusMoves.length ? statusMoves : mine;
+  const history = statusHistory(issue).map(move => {
+    const parts = move.at ? qualifyingParts(move.at, windows) : null;
+    return {
+      ...move,
+      parts,
+      inWindow: !!parts,
+      byUser: authorMatches(user, move.author)
+    };
+  });
+  const statusMoves = history.filter(move => (
+    move.status && move.inWindow && move.byUser && (move.kind === 'todo' || move.kind === 'clarification')
+  ));
+  const kinds = [...new Set(statusMoves.map(move => move.kind))];
+  const shown = statusMoves;
   return {
     key: issue && issue.key ? issue.key : '',
     summary: typeof fields.summary === 'string' ? fields.summary : '',
@@ -341,7 +375,7 @@ function toRow(issue, windows, user) {
     assignee: personName(fields.assignee),
     moveText: shown.map(oneMove).join('\n'),
     kinds,
-    inWindow: mine.length > 0,
+    inWindow: statusMoves.length > 0,
     payload: {
       key: issue && issue.key ? issue.key : '',
       fields: {
@@ -354,7 +388,9 @@ function toRow(issue, windows, user) {
         from: move.from,
         to: move.to,
         at: move.at,
-        author: move.authorName,
+        date: move.parts.date,
+        minutes: move.parts.minutes,
+        author: authorNames(move.author).join(' '),
         kind: move.kind,
         text: oneMove(move)
       }))

@@ -72,11 +72,15 @@ async function testWindowsAndMoves() {
     issue('LC-5', { from: 'Request [ 16705 ]', to: 'To do [ 10000 ]', at: '2026-11-10T18:12:00.000-0300', updated: '2026-11-10T18:12:00.000-0300', author: 'Bruno', summary: 'De outro' }),
     issue('LC-6', { from: 'Original: Request [ 16705 ]\tNew: Clarification [ 10001 ]', to: '', at: '2026-11-10T18:30:00.000-0300', updated: '2026-11-10T18:30:00.000-0300', author: 'Ada Silva', summary: 'Texto cru' })
   ], FILTERS);
-  assert.equal(rows.dropped, 2);
-  assert.deepEqual(rows.rows.map(row => row.key), ['LC-1', 'LC-2', 'LC-3', 'LC-6']);
+  assert.equal(rows.dropped, 3);
+  assert.deepEqual(rows.rows.map(row => row.key), ['LC-1', 'LC-2', 'LC-6']);
   assert.deepEqual(jira.filterByTransition(rows.rows, 'todo').map(row => row.key), ['LC-1']);
   assert.deepEqual(jira.filterByTransition(rows.rows, 'clarification').map(row => row.key), ['LC-2', 'LC-6']);
-  assert.equal(jira.filterByTransition(rows.rows, 'all').length, 4);
+  assert.equal(jira.filterByTransition(rows.rows, 'all').length, 3);
+  const listed = jira.countMoves(rows.rows);
+  assert.equal(listed.all, listed.todo + listed.clarification);
+  assert.equal(listed.todo, 1);
+  assert.equal(listed.clarification, 2);
   assert.match(rows.rows[0].moveText, /Request → To Do/);
   assert.match(rows.rows[0].moveText, /18:15/);
   assert.equal(rows.rows[0].moveText.includes('Ada'), false);
@@ -202,15 +206,38 @@ async function testWindowsAndMoves() {
     }),
     issue('LC-41', { from: 'Request', to: 'Done', at: '2026-11-10T18:20:00.000-0300', author: 'Adelino Souza', summary: 'Outro destino' })
   ], { user: 'Adelino Souza', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
-  assert.deepEqual(both.rows.map(row => row.key), ['LC-40', 'LC-41']);
+  assert.deepEqual(both.rows.map(row => row.key), ['LC-40']);
   assert.equal(both.rows[0].moveText.includes('Done'), false);
   assert.equal(both.rows[0].moveText.includes('Bruno'), false);
   const moveCounts = jira.countMoves(both.rows);
-  assert.equal(moveCounts.all, 3);
+  assert.equal(moveCounts.all, 2);
   assert.equal(moveCounts.todo, 1);
   assert.equal(moveCounts.clarification, 1);
-  assert.equal(moveCounts.neither, 1);
-  assert.equal(moveCounts.todo + moveCounts.clarification + moveCounts.neither, moveCounts.all);
+  assert.equal(moveCounts.todo + moveCounts.clarification, moveCounts.all);
+  const todoOnly = jira.metricsForRows(both.rows, 'Adelino Souza', 'todo');
+  const clarOnly = jira.metricsForRows(both.rows, 'Adelino Souza', 'clarification');
+  const bothMetrics = jira.metricsForRows(both.rows, 'Adelino Souza', 'all');
+  assert.equal(todoOnly.tickets, moveCounts.todo);
+  assert.equal(clarOnly.tickets, moveCounts.clarification);
+  assert.equal(bothMetrics.tickets, moveCounts.all);
+  assert.equal(todoOnly.weekdays.reduce((sum, count) => sum + count, 0), todoOnly.hours.reduce((sum, count) => sum + count, 0));
+
+  const utc = jira.buildRows([
+    issue('LC-50', {
+      from: 'Request',
+      to: 'To do',
+      at: '2026-11-10T18:10:00.000+0000',
+      updated: '2026-11-10T18:10:00.000+0000',
+      author: { displayName: 'A. Souza', name: 'adelino.souza', key: 'adelino.souza' },
+      summary: 'UTC'
+    })
+  ], { user: 'Ade', timeFrom: '18:00', timeTo: '22:00', days: ['2026-11-10'] });
+  assert.equal(utc.rows.length, 1);
+  const utcMetrics = jira.metricsForRows(utc.rows, 'Ade', 'todo');
+  assert.equal(utcMetrics.tickets, 1);
+  assert.equal(utcMetrics.hours[0], 1);
+  assert.equal(utcMetrics.tickets, jira.countMoves(utc.rows).todo);
+  assert.equal(utcMetrics.weekdays.reduce((sum, count) => sum + count, 0), utcMetrics.hours.reduce((sum, count) => sum + count, 0));
 
   const split = jira.metricsForRows([{
     key: 'LC-40',

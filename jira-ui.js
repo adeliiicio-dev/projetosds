@@ -153,6 +153,7 @@ function jrRowsOnDate(rows, date) {
   if (typeof jiraSearch === 'undefined') return [];
   return (rows || []).map(row => {
     const changes = ((row.payload && row.payload.statusChanges) || []).filter(change => {
+      if (change.date) return change.date === date;
       const parts = jiraSearch.zonedParts(change.at);
       return parts && parts.date === date;
     });
@@ -181,8 +182,8 @@ function jrSavedForCurrent() {
   return jrState.savedDays.filter(day => jrFoldUser(day.user) === key);
 }
 
-function jrSlice(rows) {
-  const metrics = jiraSearch.metricsForRows(rows, jrCurrentUser());
+function jrSlice(rows, transition) {
+  const metrics = jiraSearch.metricsForRows(rows, jrCurrentUser(), transition);
   return { weekdays: metrics.weekdays.slice(), hours: metrics.hours.slice(), tickets: metrics.tickets };
 }
 
@@ -226,14 +227,14 @@ function jrRenderMetrics() {
   const ownSaved = jrSavedForCurrent();
   if (jrState.period === 'saved') {
     const chosen = ownSaved.filter(day => jrState.picked.has(jrDayKey(day)));
-    const slices = chosen.map(day => (day.counts && day.counts.all) || { weekdays: [], hours: [], tickets: 0 });
+    const slices = chosen.map(day => (day.counts && (day.counts[jrState.transition] || day.counts.all)) || { weekdays: [], hours: [], tickets: 0 });
     metrics = jrSumSlices(slices);
     source = chosen.length
-      ? 'Números lidos do arquivo, só das mudanças dessa pessoa, sem nova consulta ao Jira.'
+      ? 'Números lidos do arquivo, só Request → To do e Request → Clarification dessa pessoa, sem nova consulta ao Jira.'
       : 'Escolha ao menos um dia salvo dessa pessoa.';
   } else {
-    metrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser());
-    source = 'Números da consulta atual, só das mudanças dessa pessoa, entre 18h e 22h. 22h fica de fora.';
+    metrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser(), jrState.transition);
+    source = 'Números da consulta atual, no mesmo filtro da tabela, entre 18h e 22h. 22h fica de fora.';
   }
   const days = JR_DAY_SHORT.map((label, index) => ({ label, value: metrics.weekdays[index] || 0 }));
   const hours = JR_SLOTS.map((slot, index) => ({ label: slot.label, value: metrics.hours[index] || 0 }));
@@ -298,7 +299,7 @@ function jrRenderResults() {
 
   const counts = typeof jiraSearch !== 'undefined'
     ? jiraSearch.countMoves(jrState.issues)
-    : { all: 0, todo: 0, clarification: 0, neither: 0 };
+    : { all: 0, todo: 0, clarification: 0 };
   const countAll = document.getElementById('jrCountAll');
   const countTodo = document.getElementById('jrCountTodo');
   const countClar = document.getElementById('jrCountClar');
@@ -335,12 +336,9 @@ function jrRenderResults() {
     notes.push(`Já salvo, sem nova consulta ao Jira: ${savedLabel}.`);
   }
   const visible = jrFilter(jrState.issues, jrState.transition);
-  const noun = visible.length === 1 ? 'ticket' : 'tickets';
-  if (counts.neither > 0) {
-    const other = counts.neither === 1 ? '1 mudança dele' : `${counts.neither} mudanças dele`;
-    notes.push(`${other} não saíram de Request para To do nem para Clarification.`);
-  }
-  meta.innerHTML = `<p class="muted mb-2">${visible.length} ${noun} neste filtro.</p>${notes.map(note => `<p class="muted mb-2">${jrEsc(note)}</p>`).join('')}`;
+  const selected = jrState.transition === 'todo' ? counts.todo : jrState.transition === 'clarification' ? counts.clarification : counts.all;
+  const noun = selected === 1 ? 'mudança' : 'mudanças';
+  meta.innerHTML = `<p class="muted mb-2">${selected} ${noun} neste filtro.</p>${notes.map(note => `<p class="muted mb-2">${jrEsc(note)}</p>`).join('')}`;
   table.innerHTML = visible.length ? `<div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
       <thead><tr><th>Key</th><th>Summary</th><th>Status</th><th>Assignee</th><th>Movimento</th></tr></thead>
       <tbody>${visible.map(row => `<tr>
@@ -471,9 +469,9 @@ async function jrSaveSelected() {
         date,
         user,
         counts: {
-          all: jrSlice(dated),
-          todo: jrSlice(jrFilter(dated, 'todo')),
-          clarification: jrSlice(jrFilter(dated, 'clarification'))
+          all: jrSlice(dated, 'all'),
+          todo: jrSlice(dated, 'todo'),
+          clarification: jrSlice(dated, 'clarification')
         }
       })
     });
