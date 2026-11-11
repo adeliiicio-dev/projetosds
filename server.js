@@ -314,13 +314,42 @@ function cleanSavedDay(input) {
   return { date, user, savedAt, counts: { all, todo, clarification } };
 }
 
-function readMetrics(filePath) {
+const NOTE_SUBS = ['Chile', 'Peru', 'Colombia', 'Mexico'];
+
+function cleanNoteText(value, max) {
+  const text = String(value || '').replace(/\r\n/g, '\n').trim();
+  if (!text || text.length > max || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) return '';
+  return text;
+}
+
+function cleanSubsidiaries(value) {
+  if (!Array.isArray(value) || !value.length || value.length > NOTE_SUBS.length) return null;
+  const seen = new Set();
+  for (const item of value) {
+    if (typeof item !== 'string' || !NOTE_SUBS.includes(item) || seen.has(item)) return null;
+    seen.add(item);
+  }
+  return NOTE_SUBS.filter(name => seen.has(name));
+}
+
+function cleanStoredNote(input) {
+  if (!input || typeof input !== 'object') return null;
+  const title = cleanNoteText(input.title, 120);
+  const description = cleanNoteText(input.description, 4000);
+  const subsidiaries = cleanSubsidiaries(input.subsidiaries);
+  const id = String(input.id || '');
+  const savedAt = typeof input.savedAt === 'string' && input.savedAt.length <= 40 ? input.savedAt : '';
+  if (!title || !description || !subsidiaries || !/^[a-z0-9]{8,32}$/.test(id)) return null;
+  return { id, title, description, subsidiaries, savedAt };
+}
+
+function readStore(filePath) {
   const file = metricsPath(filePath);
   let text;
   try {
     text = fs.readFileSync(file, 'utf8');
   } catch (err) {
-    if (err && err.code === 'ENOENT') return { days: [] };
+    if (err && err.code === 'ENOENT') return { days: [], notes: [] };
     const error = new Error('Não foi possível ler as métricas salvas.');
     error.status = 500;
     throw error;
@@ -332,12 +361,20 @@ function readMetrics(filePath) {
     throw error;
   }
   const token = String(process.env.BEARER_TOKEN || '');
-  const days = Array.isArray(parsed && parsed.days) ? parsed.days.map(cleanSavedDay).filter(day => {
-    if (!day) return false;
-    return !(token.length >= 4 && JSON.stringify(day).includes(token));
-  }) : [];
+  const keep = item => item && !(token.length >= 4 && JSON.stringify(item).includes(token));
+  const days = Array.isArray(parsed && parsed.days)
+    ? parsed.days.map(cleanSavedDay).filter(keep)
+    : [];
+  const notes = Array.isArray(parsed && parsed.notes)
+    ? parsed.notes.map(cleanStoredNote).filter(keep)
+    : [];
   days.sort((a, b) => a.date.localeCompare(b.date) || a.user.localeCompare(b.user, 'pt'));
-  return { days };
+  notes.sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)));
+  return { days, notes };
+}
+
+function readMetrics(filePath) {
+  return { days: readStore(filePath).days };
 }
 
 function publicDay(day) {
@@ -349,10 +386,10 @@ function publicDay(day) {
   };
 }
 
-function writeMetrics(filePath, days) {
+function writeStore(filePath, store) {
   const file = metricsPath(filePath);
   const token = String(process.env.BEARER_TOKEN || '');
-  const body = JSON.stringify({ days }, null, 2);
+  const body = JSON.stringify({ days: store.days, notes: store.notes }, null, 2);
   if (token.length >= 4 && body.includes(token)) {
     const err = new Error('O arquivo de métricas não pode guardar o token.');
     err.status = 400;
@@ -377,15 +414,53 @@ function saveMetricsDay(input, filePath) {
     err.status = 400;
     throw err;
   }
-  const store = readMetrics(filePath);
+  const store = readStore(filePath);
   const savedAt = new Date().toISOString();
   const next = { ...clean, savedAt };
   const key = foldName(clean.user);
   const days = store.days.filter(day => !(day.date === clean.date && foldName(day.user) === key));
   days.push(next);
   days.sort((a, b) => a.date.localeCompare(b.date) || a.user.localeCompare(b.user, 'pt'));
-  writeMetrics(filePath, days);
+  writeStore(filePath, { days, notes: store.notes });
   return publicDay(next);
+}
+
+function saveNote(input, filePath) {
+  const title = cleanNoteText(input && input.title, 120);
+  const description = cleanNoteText(input && input.description, 4000);
+  const subsidiaries = cleanSubsidiaries(input && input.subsidiaries);
+  if (!title || !description || !subsidiaries) {
+    const err = new Error('Anotação inválida. Informe título, descrição e ao menos uma subsidiary.');
+    err.status = 400;
+    throw err;
+  }
+  const token = String(process.env.BEARER_TOKEN || '');
+  if (token.length >= 4 && `${title}\n${description}`.includes(token)) {
+    const err = new Error('A anotação não pode guardar o token.');
+    err.status = 400;
+    throw err;
+  }
+  const store = readStore(filePath);
+  if (store.notes.length >= 200) {
+    const err = new Error('O arquivo já tem anotações demais.');
+    err.status = 400;
+    throw err;
+  }
+  const note = cleanStoredNote({
+    id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+    title,
+    description,
+    subsidiaries,
+    savedAt: new Date().toISOString()
+  });
+  if (!note) {
+    const err = new Error('Anotação inválida.');
+    err.status = 400;
+    throw err;
+  }
+  store.notes.unshift(note);
+  writeStore(filePath, store);
+  return note;
 }
 
 function savedForSearch(filters, filePath) {
@@ -528,9 +603,25 @@ async function handleRequest(req, res, options) {
     sendJson(res, 200, result);
     return;
   }
+  if (url.pathname === '/api/jira/notes') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Use POST.' });
+      return;
+    }
+    const raw = await readBody(req);
+    let body;
+    try { body = JSON.parse(raw || '{}'); } catch {
+      sendJson(res, 400, { error: 'JSON inválido.' });
+      return;
+    }
+    const note = saveNote(body, options.metricsPath);
+    sendJson(res, 200, { note, notes: readStore(options.metricsPath).notes });
+    return;
+  }
   if (url.pathname === '/api/jira/metrics') {
     if (req.method === 'GET' || req.method === 'HEAD') {
-      sendJson(res, 200, { days: readMetrics(options.metricsPath).days.map(publicDay) });
+      const store = readStore(options.metricsPath);
+      sendJson(res, 200, { days: store.days.map(publicDay), notes: store.notes });
       return;
     }
     if (req.method !== 'POST') {

@@ -54,7 +54,10 @@ const jrState = {
   range: null,
   picked: new Set(),
   saveNote: '',
-  saving: false
+  saving: false,
+  notes: [],
+  noteStatus: '',
+  noteSaving: false
 };
 
 function jrEsc(value) {
@@ -103,17 +106,6 @@ function jrFilter(rows, transition) {
     return list.filter(row => Array.isArray(row.kinds) && row.kinds.includes(transition));
   }
   return list.slice();
-}
-
-function jrSetGuide(id) {
-  const weekly = document.getElementById('rpGuideSemanal');
-  const v2 = document.getElementById('rpGuideV2');
-  if (!weekly || !v2) return;
-  weekly.classList.toggle('rp-guide-off', id !== 'semanal');
-  v2.classList.toggle('rp-guide-off', id !== 'v2');
-  document.querySelectorAll('[data-rp-guide]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.rpGuide === id);
-  });
 }
 
 function jrRenderSlots() {
@@ -586,12 +578,66 @@ async function jrLoadSaved() {
     const data = await response.json();
     const days = data && Array.isArray(data.days) ? data.days : [];
     jrState.savedDays = days;
+    jrState.notes = data && Array.isArray(data.notes) ? data.notes : [];
     days.forEach(day => jrState.picked.add(jrDayKey(day)));
     if (!jrState.info && days.length) jrState.period = 'saved';
   } catch {
     /* a lista salva fica vazia se o servidor local não responder */
   }
   jrRenderResults();
+  jrRenderNotes();
+}
+
+function jrRenderNotes() {
+  const status = document.getElementById('jrNoteStatus');
+  const list = document.getElementById('jrNoteList');
+  if (status) status.textContent = jrState.noteStatus;
+  if (!list) return;
+  const notes = Array.isArray(jrState.notes) ? jrState.notes : [];
+  if (!notes.length) {
+    list.innerHTML = '<p class="muted mb-0">Nenhuma anotação salva.</p>';
+    return;
+  }
+  list.innerHTML = notes.map(note => `<article class="border rounded p-3 mb-2">
+      <strong>${jrEsc(note.title)}</strong>
+      <span class="muted"> · ${jrEsc((note.subsidiaries || []).join(', '))}</span>
+      <p class="mb-0 mt-2">${jrEsc(note.description).replace(/\n/g, '<br>')}</p>
+    </article>`).join('');
+}
+
+async function jrSaveNote(event) {
+  event.preventDefault();
+  if (jrState.noteSaving) return;
+  const title = document.getElementById('jrNoteTitle').value.trim();
+  const description = document.getElementById('jrNoteBody').value.trim();
+  const subsidiaries = [...document.querySelectorAll('input[name="jrNoteSub"]:checked')].map(box => box.value);
+  if (!title || !description || !subsidiaries.length) {
+    jrState.noteStatus = 'Informe título, descrição e ao menos uma subsidiary.';
+    jrRenderNotes();
+    return;
+  }
+  jrState.noteSaving = true;
+  jrState.noteStatus = 'Salvando…';
+  jrRenderNotes();
+  try {
+    const response = await fetch('/api/jira/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ title, description, subsidiaries })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error((data && data.error) || 'Não foi possível salvar a anotação.');
+    jrState.notes = Array.isArray(data.notes) ? data.notes : [];
+    document.getElementById('jrNoteTitle').value = '';
+    document.getElementById('jrNoteBody').value = '';
+    document.querySelectorAll('input[name="jrNoteSub"]').forEach(box => { box.checked = false; });
+    jrState.noteStatus = 'Anotação salva neste computador.';
+  } catch (err) {
+    jrState.noteStatus = err.message || 'Não foi possível salvar a anotação.';
+  } finally {
+    jrState.noteSaving = false;
+    jrRenderNotes();
+  }
 }
 
 async function jrSaveSelected() {
@@ -636,7 +682,7 @@ async function jrSaveSelected() {
 
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
-    const screen = document.getElementById('rpGuideV2');
+    const screen = document.getElementById('jrForm');
     if (!screen) return;
     const today = jrToday();
     jrState.weekStart = jrMonday(today);
@@ -648,10 +694,6 @@ if (typeof document !== 'undefined') {
     jrRenderResults();
     jrLoadSaved();
 
-    document.getElementById('rpGuides').addEventListener('click', event => {
-      const btn = event.target.closest('[data-rp-guide]');
-      if (btn) jrSetGuide(btn.dataset.rpGuide);
-    });
     document.getElementById('jrPrevWeek').addEventListener('click', () => {
       jrState.weekStart = jrAddDays(jrState.weekStart, -7);
       jrRenderDays();
@@ -683,6 +725,7 @@ if (typeof document !== 'undefined') {
     document.getElementById('jrTo').addEventListener('input', jrRenderSlots);
     document.getElementById('jrUser').addEventListener('input', jrRenderResults);
     document.getElementById('jrForm').addEventListener('submit', jrConsult);
+    document.getElementById('jrNoteForm').addEventListener('submit', jrSaveNote);
     const applyMove = event => {
       const radio = event.target.closest('input[name="jrMove"]');
       if (!radio) return;

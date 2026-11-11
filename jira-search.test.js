@@ -514,7 +514,14 @@ async function testHttp() {
     const page = await requestOnce(port, 'GET', '/');
     assert.equal(page.status, 200);
     assert.match(page.type, /text\/html/);
-    assert.match(page.body, /Report v2/);
+    assert.match(page.body, /Relatório semanal/);
+    assert.match(page.body, /id="rpDays"/);
+    assert.match(page.body, /Anotações/);
+    assert.match(page.body, /value="Chile"/);
+    assert.match(page.body, /value="Peru"/);
+    assert.match(page.body, /value="Colombia"/);
+    assert.match(page.body, /value="Mexico"/);
+    assert.equal(/data-rp-guide|Report v2/.test(page.body), false);
     const wrong = await requestOnce(port, 'PUT', '/api/jira/search', '{}');
     assert.equal(wrong.status, 405);
 
@@ -659,6 +666,45 @@ async function testSavedDays() {
 
     const bad = await requestOnce(port, 'POST', '/api/jira/metrics', JSON.stringify({ date: 'ontem', user: 'Ada', counts }));
     assert.equal(bad.status, 400);
+
+    const note = await requestOnce(port, 'POST', '/api/jira/notes', JSON.stringify({
+      title: 'Plantão',
+      description: 'Fila da noite',
+      subsidiaries: ['Mexico', 'Chile'],
+      bearer: token
+    }));
+    assert.equal(note.status, 200);
+    assert.equal(note.body.includes(token), false);
+    assert.deepEqual(JSON.parse(note.body).note.subsidiaries, ['Chile', 'Mexico']);
+    const afterNote = JSON.parse((await requestOnce(port, 'GET', '/api/jira/metrics')).body);
+    assert.equal(afterNote.notes.length, 1);
+    assert.equal(afterNote.notes[0].title, 'Plantão');
+    assert.equal(afterNote.days.length, 1);
+    const dayAgain = await requestOnce(port, 'POST', '/api/jira/metrics', JSON.stringify({
+      date: '2026-11-12', user: 'Ada', counts
+    }));
+    assert.equal(dayAgain.status, 200);
+    const both = JSON.parse((await requestOnce(port, 'GET', '/api/jira/metrics')).body);
+    assert.equal(both.days.length, 2);
+    assert.equal(both.notes.length, 1);
+    assert.equal(both.notes[0].description, 'Fila da noite');
+    const disk = JSON.parse(fs.readFileSync(metricsPath, 'utf8'));
+    assert.equal(disk.notes.length, 1);
+    assert.equal(disk.days.length, 2);
+    assert.equal(disk.notes[0].title, 'Plantão');
+    const rejected = await requestOnce(port, 'POST', '/api/jira/notes', JSON.stringify({
+      title: 'Segredo', description: token, subsidiaries: ['Peru']
+    }));
+    assert.equal(rejected.status, 400);
+    const unknown = await requestOnce(port, 'POST', '/api/jira/notes', JSON.stringify({
+      title: 'Outro', description: 'Brasil não entra', subsidiaries: ['Brasil']
+    }));
+    assert.equal(unknown.status, 400);
+    const stored = fs.readFileSync(metricsPath, 'utf8');
+    assert.equal(stored.includes(token), false);
+    assert.equal(stored.includes('Brasil'), false);
+    assert.equal(JSON.parse(stored).notes.length, 1);
+
     const hidden = await requestOnce(port, 'GET', '/data/report-v2-metrics.json');
     assert.equal(hidden.status, 404);
   } finally {
