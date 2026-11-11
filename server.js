@@ -119,7 +119,7 @@ function jiraError(data, status, rawText, token) {
   return err;
 }
 
-function changelogUrl(baseUrl, key, startAt) {
+function issueChangelogUrl(baseUrl, key) {
   if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(key || '')) {
     const err = new Error('Chave de ticket inválida.');
     err.status = 400;
@@ -127,20 +127,19 @@ function changelogUrl(baseUrl, key, startAt) {
   }
   const url = new URL(baseUrl);
   const prefix = url.pathname.replace(/\/+$/, '').replace(/\/rest\/api\/\d+\/search$/i, '');
-  url.pathname = `${prefix}/rest/api/2/issue/${encodeURIComponent(key)}/changelog`.replace(/\/{2,}/g, '/');
+  url.pathname = `${prefix}/rest/api/2/issue/${encodeURIComponent(key)}`.replace(/\/{2,}/g, '/');
   url.search = '';
   url.hash = '';
   url.username = '';
   url.password = '';
-  url.searchParams.set('startAt', String(startAt));
-  url.searchParams.set('maxResults', '100');
+  url.searchParams.set('expand', 'changelog');
   return url;
 }
 
 async function jiraCall(config, url, method, body, fetchImpl) {
   const allowed = method === 'POST'
     ? url.pathname.endsWith('/rest/api/2/search')
-    : method === 'GET' && /\/rest\/api\/2\/issue\/[^/]+\/changelog$/.test(url.pathname);
+    : method === 'GET' && /\/rest\/api\/2\/issue\/[^/]+$/.test(url.pathname) && url.searchParams.get('expand') === 'changelog';
   if (!allowed) {
     const err = new Error('Consulta Jira bloqueada.');
     err.status = 500;
@@ -184,22 +183,13 @@ async function jiraPost(config, body, fetchImpl) {
 
 async function loadChangelog(config, key, fetchImpl) {
   if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(key || '')) return [];
-  const histories = [];
-  let startAt = 0;
-  let total = Infinity;
-  while (histories.length < total && startAt < 5000) {
-    const page = await jiraCall(config, changelogUrl(config.baseUrl, key, startAt), 'GET', null, fetchImpl);
-    const batch = Array.isArray(page.values) ? page.values : (Array.isArray(page.histories) ? page.histories : []);
-    const pageTotal = Number(page.total);
-    if (Number.isFinite(pageTotal)) total = pageTotal;
-    if (!batch.length) break;
-    histories.push(...batch);
-    if (histories.length >= total || batch.length < 100) break;
-    const next = startAt + batch.length;
-    if (next <= startAt) break;
-    startAt = next;
-  }
-  return histories;
+  const page = await jiraCall(config, issueChangelogUrl(config.baseUrl, key), 'GET', null, fetchImpl);
+  const changelog = page && page.changelog;
+  if (changelog && Array.isArray(changelog.histories)) return changelog.histories;
+  if (changelog && Array.isArray(changelog.values)) return changelog.values;
+  if (Array.isArray(page.histories)) return page.histories;
+  if (Array.isArray(page.values)) return page.values;
+  return [];
 }
 
 async function runSearch(input, fetchImpl = global.fetch) {

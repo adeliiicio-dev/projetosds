@@ -201,14 +201,17 @@ async function testHttp() {
   const fetchImpl = async (url, options) => {
     calls.push({ url: String(url), method: options.method, redirect: options.redirect, headers: options.headers, body: options.body });
     const href = String(url);
-    if (options.method === 'GET' && /\/rest\/api\/2\/issue\/LC-7\/changelog\?/.test(href)) {
+    if (href.includes('/changelog')) {
+      return { ok: false, status: 404, text: async () => 'HTTP 404 Not Found' };
+    }
+    if (options.method === 'GET' && /\/rest\/api\/2\/issue\/LC-7\?expand=changelog$/.test(href)) {
       assert.equal(options.headers.Authorization, `Bearer ${token}`);
       assert.equal(options.redirect, 'error');
       assert.equal(options.body, undefined);
       return {
         ok: true,
         status: 200,
-        text: async () => JSON.stringify({ total: 1, values: sample.changelog.histories })
+        text: async () => JSON.stringify({ key: 'LC-7', changelog: { histories: sample.changelog.histories } })
       };
     }
     if (!href.endsWith('/rest/api/2/search') || options.method !== 'POST') {
@@ -251,7 +254,8 @@ async function testHttp() {
     assert.equal(calls[0].headers.Authorization, `Bearer ${token}`);
     assert.equal(String(calls[0].url), 'http://jira.example/jira/rest/api/2/search');
     assert.equal(calls[1].method, 'GET');
-    assert.match(String(calls[1].url), /\/rest\/api\/2\/issue\/LC-7\/changelog\?startAt=0&maxResults=100$/);
+    assert.match(String(calls[1].url), /\/rest\/api\/2\/issue\/LC-7\?expand=changelog$/);
+    assert.equal(String(calls[1].url).includes('/changelog'), false);
 
     const deniedFetch = async () => ({
       ok: false,
@@ -300,10 +304,13 @@ async function testHttp() {
     });
     const mismatchFetch = async (url, options) => {
       const href = String(url);
+      if (href.includes('/changelog')) {
+        return { ok: false, status: 404, text: async () => 'HTTP 404 Not Found' };
+      }
       if (options.method === 'GET') {
-        const key = href.match(/\/issue\/(LC-4\d)\//);
+        const key = href.match(/\/issue\/(LC-4\d)\?expand=changelog$/);
         const found = mismatch.find(row => row.key === (key && key[1]));
-        return { ok: true, status: 200, text: async () => JSON.stringify({ total: 1, values: found.history }) };
+        return { ok: true, status: 200, text: async () => JSON.stringify({ changelog: { histories: found.history } }) };
       }
       return { ok: true, status: 200, text: async () => JSON.stringify({ total: 5, issues: mismatch }) };
     };
@@ -363,9 +370,9 @@ async function testHttp() {
 function testSources() {
   const files = ['server.js', 'jira-search.js', 'jira-ui.js', 'index.html'];
   const src = files.map(file => fs.readFileSync(path.join(__dirname, file), 'utf8')).join('\n');
-  const issuePaths = src.match(/\/rest\/api\/2\/issue[^\s'"`]*/g) || [];
-  assert.ok(issuePaths.length > 0);
-  issuePaths.forEach(hit => assert.match(hit, /changelog/));
+  assert.match(src, /\/rest\/api\/2\/issue\//);
+  assert.match(src, /searchParams\.set\('expand', 'changelog'\)/);
+  assert.equal(/\/rest\/api\/2\/issue\/[^'"`\s]*\/changelog/.test(src), false);
   assert.equal(src.includes('foram alterados'), false);
   assert.equal(src.includes('O Jira devolveu'), false);
   assert.equal(/\btransitions\b/.test(src), false);
