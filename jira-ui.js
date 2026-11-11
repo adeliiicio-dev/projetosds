@@ -259,7 +259,7 @@ function jrRenderMetrics() {
     const label = `${jrFmt(day.date)} ${jrWeekdayLabel(day.date)} · ${day.user}`;
     return `<label class="rp-check"><input type="checkbox" data-jr-picked="${jrEsc(key)}"${checked}${jrState.period === 'saved' ? '' : ' disabled'}> ${jrEsc(label)}</label>`;
   }).join('');
-  const subBoards = JR_SUBS.map(name => `<h4 class="m-0 mt-4">${jrEsc(name)}</h4>${jrMetricPair(jrSubCounts(metrics, name), metrics.bands)}${jrExtraTables(name)}`).join('');
+  const subBoards = JR_SUBS.map(name => `<h4 class="m-0 mt-4">${jrEsc(name)}</h4>${jrMetricPair(jrSubCounts(metrics, name), metrics.bands, name)}${jrExtraTables(name)}`).join('');
   host.innerHTML = `<div class="section-card">
     <div class="section-title">
       <i class="bi bi-bar-chart text-accent fs-4"></i>
@@ -272,7 +272,7 @@ function jrRenderMetrics() {
     <div class="jr-days mb-3">${savedBoxes}</div>
     <p class="muted mb-3">${metrics.tickets} ${noun} dele na faixa escolhida, no horário de Brasília. ${jrEsc(source)} Cada mudança entra em um dia e em uma faixa.</p>
     <h4 class="m-0 mb-3">Todas Subs</h4>
-    ${jrMetricPair(metrics, metrics.bands)}
+    ${jrMetricPair(metrics, metrics.bands, '')}
     ${jrExtraTables('')}
     ${subBoards}
     ${jrSummary(summaryMetrics)}
@@ -358,11 +358,70 @@ function jrSubCounts(metrics, name) {
   return { weekdays: days, hours };
 }
 
-function jrMetricPair(counts, bands) {
-  const days = JR_DAY_SHORT.map((label, index) => ({ label, value: (counts.weekdays || [])[index] || 0 }));
+function jrWeekdayIndex(date) {
+  const match = String(date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return -1;
+  const utc = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return (utc.getUTCDay() + 6) % 7;
+}
+
+function jrAddWeekdays(target, counts) {
+  (counts || []).forEach((count, index) => { if (index < 7) target[index] += count || 0; });
+}
+
+function jrWeekdaySplit(name) {
+  const todo = [0, 0, 0, 0, 0, 0, 0];
+  const clarification = [0, 0, 0, 0, 0, 0, 0];
+  if (jrState.period === 'saved') {
+    jrSavedForCurrent().filter(day => jrState.picked.has(jrDayKey(day))).forEach(day => {
+      const counts = day.counts || {};
+      jrAddWeekdays(todo, name ? jrSubDays(counts.todo, name) : (counts.todo && counts.todo.weekdays));
+      jrAddWeekdays(clarification, name ? jrSubDays(counts.clarification, name) : (counts.clarification && counts.clarification.weekdays));
+    });
+    return { todo, clarification };
+  }
+  (jrState.issues || []).forEach(row => {
+    const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
+    changes.forEach(change => {
+      if (!jrSubMatch(change && (change.subsidiary || row.subsidiary), name)) return;
+      const index = jrWeekdayIndex(change && change.date);
+      if (index < 0) return;
+      if (change.kind === 'todo') todo[index] += 1;
+      else if (change.kind === 'clarification') clarification[index] += 1;
+    });
+  });
+  return { todo, clarification };
+}
+
+function jrSubDays(slice, name) {
+  const days = [0, 0, 0, 0, 0, 0, 0];
+  ((slice && slice.subsidiaries) || []).forEach(rec => {
+    if (!jrSubMatch(rec.name, name)) return;
+    jrAddWeekdays(days, rec.days);
+  });
+  return days;
+}
+
+function jrWeekdayTable(name) {
+  const split = jrWeekdaySplit(name);
+  const body = JR_DAY_SHORT.map((label, index) => {
+    const todo = split.todo[index] || 0;
+    const clarification = split.clarification[index] || 0;
+    return `<tr><th>${jrEsc(label)}</th><td class="num">${todo}</td><td class="num">${clarification}</td><td class="num">${todo + clarification}</td></tr>`;
+  }).join('');
+  const todoTotal = split.todo.reduce((sum, count) => sum + count, 0);
+  const clarTotal = split.clarification.reduce((sum, count) => sum + count, 0);
+  return `<div class="table-wrap rp-fit"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
+    <thead><tr><th>Dia</th><th>To do</th><th>Clarification</th><th>Mudanças</th></tr></thead>
+    <tbody>${body}</tbody>
+    <tfoot><tr><th>Total</th><th class="num">${todoTotal}</th><th class="num">${clarTotal}</th><th class="num">${todoTotal + clarTotal}</th></tr></tfoot>
+  </table></div>`;
+}
+
+function jrMetricPair(counts, bands, name) {
   const hours = (bands || []).map((band, index) => ({ label: band.label, value: (counts.hours || [])[index] || 0 }));
   return `<div class="rp-pair">
-    <div class="rp-pane">${jrCountTable('Dia', days)}</div>
+    <div class="rp-pane">${jrWeekdayTable(name)}</div>
     <div class="rp-pane">${jrCountTable('Hora', hours)}</div>
   </div>`;
 }
