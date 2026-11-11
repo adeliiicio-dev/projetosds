@@ -383,7 +383,6 @@ function metricsForRows(rows, user, transition, range) {
   const weekdays = [0, 0, 0, 0, 0, 0, 0];
   const hours = bands.map(() => 0);
   const subs = new Map();
-  const chosen = new Map();
   const wanted = foldStatus(user);
   const touch = name => {
     if (!subs.has(name)) {
@@ -395,10 +394,9 @@ function metricsForRows(rows, user, transition, range) {
     }
     return subs.get(name);
   };
-  (Array.isArray(rows) ? rows : []).forEach((row, rowIndex) => {
+  (Array.isArray(rows) ? rows : []).forEach(row => {
     const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
-    const id = row && row.key ? String(row.key) : `row-${rowIndex}`;
-    changes.forEach((change, changeIndex) => {
+    changes.forEach(change => {
       const kind = changeKind(change);
       if (kind !== 'todo' && kind !== 'clarification') return;
       if ((transition === 'todo' || transition === 'clarification') && kind !== transition) return;
@@ -408,19 +406,12 @@ function metricsForRows(rows, user, transition, range) {
       const day = weekdayIndex(parts.date);
       const band = bands.findIndex(item => parts.minutes >= item.from && parts.minutes < item.to);
       if (day < 0 || band < 0) return;
-      const parsed = Date.parse(change && change.at);
-      const instant = Number.isFinite(parsed) ? parsed : changeIndex;
-      const current = chosen.get(id);
-      if (current && (instant < current.instant || (instant === current.instant && changeIndex <= current.changeIndex))) return;
-      chosen.set(id, { change, day, band, instant, changeIndex });
+      weekdays[day] += 1;
+      hours[band] += 1;
+      const rec = touch(subsidiaryText(change && change.subsidiary) || '(vazio)');
+      rec.days[day] += 1;
+      rec.bands[band] += 1;
     });
-  });
-  chosen.forEach(item => {
-    weekdays[item.day] += 1;
-    hours[item.band] += 1;
-    const rec = touch(subsidiaryText(item.change && item.change.subsidiary) || '(vazio)');
-    rec.days[item.day] += 1;
-    rec.bands[item.band] += 1;
   });
   const tickets = weekdays.reduce((sum, count) => sum + count, 0);
   const subsidiaries = Array.from(subs.values()).sort((a, b) => {
@@ -428,6 +419,31 @@ function metricsForRows(rows, user, transition, range) {
     return total(b) - total(a) || a.name.localeCompare(b.name, 'pt');
   });
   return { weekdays, hours, bands, subsidiaries, tickets };
+}
+
+function leaderNames(items) {
+  const ranked = items.filter(item => item && item.value > 0 && item.label);
+  if (!ranked.length) return 'Nenhum';
+  const max = Math.max(...ranked.map(item => item.value));
+  return ranked.filter(item => item.value === max).map(item => item.label).join(', ');
+}
+
+function metricLeaders(metrics) {
+  const bands = metrics && Array.isArray(metrics.bands) ? metrics.bands : [];
+  const hours = metrics && Array.isArray(metrics.hours) ? metrics.hours : [];
+  const subs = metrics && Array.isArray(metrics.subsidiaries) ? metrics.subsidiaries : [];
+  const night = subs.map(rec => ({
+    label: rec.name,
+    value: (rec.bands || []).reduce((sum, count, index) => {
+      const band = bands[index];
+      return band && Number(band.from) >= 18 * 60 ? sum + (count || 0) : sum;
+    }, 0)
+  }));
+  const slots = bands.map((band, index) => ({ label: band.label, value: hours[index] || 0 }));
+  return {
+    nightSubsidiary: leaderNames(night),
+    busiestBand: leaderNames(slots)
+  };
 }
 
 function countMoves(rows) {
@@ -564,6 +580,7 @@ const jiraSearchApi = {
   COE_SUBSIDIARIES_NAME,
   subsidiaryFieldId,
   hourBands,
+  metricLeaders,
   assertSearchInput,
   buildSearchJql,
   statusMoveKind,

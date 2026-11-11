@@ -258,7 +258,7 @@ function jrCountTable(caption, items) {
   const body = items.map(item => `<tr><th>${jrEsc(item.label)}</th><td class="num">${item.value}</td></tr>`).join('');
   const total = items.reduce((sum, item) => sum + item.value, 0);
   return `<div class="table-wrap rp-fit"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
-    <thead><tr><th>${jrEsc(caption)}</th><th>Tickets</th></tr></thead>
+    <thead><tr><th>${jrEsc(caption)}</th><th>Mudanças</th></tr></thead>
     <tbody>${body}</tbody>
     <tfoot><tr><th>Total</th><th class="num">${total}</th></tr></tfoot>
   </table></div>`;
@@ -278,24 +278,31 @@ function jrRenderMetrics() {
   }
   const queried = hasCurrent && Array.isArray(jrState.info.queried) ? jrState.info.queried : [];
   let metrics;
+  let summaryMetrics;
   let source;
+  let rangeLabel = '';
   const ownSaved = jrSavedForCurrent();
   if (jrState.period === 'saved') {
     const chosen = ownSaved.filter(day => jrState.picked.has(jrDayKey(day)));
     const slices = chosen.map(day => (day.counts && (day.counts[jrState.transition] || day.counts.all)) || { weekdays: [], hours: [], tickets: 0 });
+    const allSlices = chosen.map(day => (day.counts && day.counts.all) || { weekdays: [], hours: [], tickets: 0 });
     metrics = jrSumSlices(slices);
+    summaryMetrics = jrSumSlices(allSlices);
     source = chosen.length
       ? 'Números lidos do arquivo, só Request → To do e Request → Clarification dessa pessoa, sem nova consulta ao Jira.'
       : 'Escolha ao menos um dia salvo dessa pessoa.';
   } else {
     metrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser(), jrState.transition, jrState.range);
+    summaryMetrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser(), 'all', jrState.range);
     const from = jrState.range ? jrState.range.timeFrom : '';
     const to = jrState.range ? jrState.range.timeTo : '';
+    rangeLabel = from && to ? `${from}–${to}` : '';
     source = `Números da consulta atual, no mesmo filtro da tabela, entre ${from} e ${to}.`;
   }
+  if (!rangeLabel) rangeLabel = jrSpanLabel(summaryMetrics.bands);
   const days = JR_DAY_SHORT.map((label, index) => ({ label, value: metrics.weekdays[index] || 0 }));
   const hours = (metrics.bands || []).map((band, index) => ({ label: band.label, value: metrics.hours[index] || 0 }));
-  const noun = metrics.tickets === 1 ? 'ticket' : 'tickets';
+  const noun = metrics.tickets === 1 ? 'mudança' : 'mudanças';
   const savedBoxes = ownSaved.map(day => {
     const key = jrDayKey(day);
     const checked = jrState.picked.has(key) ? ' checked' : '';
@@ -319,12 +326,35 @@ function jrRenderMetrics() {
     </div>
     <div class="jr-days mb-3">${savedBoxes}</div>
     ${saveRow}
-    <p class="muted mb-3">${metrics.tickets} ${noun} dele na faixa escolhida, no horário de Brasília. ${jrEsc(source)} Cada ticket entra uma vez, no dia e na faixa da última mudança dele nesse período.</p>
+    <p class="muted mb-3">${metrics.tickets} ${noun} dele na faixa escolhida, no horário de Brasília. ${jrEsc(source)} Cada mudança entra em um dia e em uma faixa.</p>
     <div class="rp-pair">
       <div class="rp-pane">${jrCountTable('Dia', days)}</div>
       <div class="rp-pane">${jrCountTable('Hora', hours)}</div>
     </div>
-    ${jrCoeBlock(metrics)}
+    ${jrCoeBlock(metrics, rangeLabel)}
+    ${jrSummary(summaryMetrics)}
+  </div>`;
+}
+
+function jrClock(minutes) {
+  const hour = Math.floor(Number(minutes) / 60);
+  const minute = Number(minutes) % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function jrSpanLabel(bands) {
+  const list = Array.isArray(bands) ? bands.filter(band => Number.isFinite(Number(band.from)) && Number.isFinite(Number(band.to))) : [];
+  if (!list.length) return '';
+  const from = Math.min(...list.map(band => Number(band.from)));
+  const to = Math.max(...list.map(band => Number(band.to)));
+  return `${jrClock(from)}–${jrClock(to)}`;
+}
+
+function jrSummary(metrics) {
+  const leaders = jiraSearch.metricLeaders(metrics || {});
+  return `<div class="mt-4">
+    <p class="mb-1"><strong>Sub com mais tickets noturnos:</strong> ${jrEsc(leaders.nightSubsidiary)}</p>
+    <p class="mb-0"><strong>Faixa de horário com mais tickets:</strong> ${jrEsc(leaders.busiestBand)}</p>
   </div>`;
 }
 
@@ -359,7 +389,7 @@ function jrCoeChart(subs, columns, series, pick, title) {
   return rpMatrixChart(groups, series, title);
 }
 
-function jrCoeBlock(metrics) {
+function jrCoeBlock(metrics, rangeLabel) {
   const subs = metrics.subsidiaries || [];
   const dayColumns = JR_DAY_SHORT.map((label, index) => ({ label, index }));
   const daySeries = dayColumns.map((col, index) => ({ label: col.label, color: JR_DAY_COLORS[index] }));
@@ -370,19 +400,21 @@ function jrCoeBlock(metrics) {
   }));
   const dayPick = (rec, col) => (rec.days || [])[col.index] || 0;
   const bandPick = (rec, col) => (rec.bands || [])[col.index] || 0;
+  const dayTitle = `Quantidade de tickets por dia no horário: ${rangeLabel || '—'}`;
+  const bandTitle = 'Quantidade de tickets por Subs em cada faixa de horário';
   return `<div class="section-title mt-4">
-      <h4 class="m-0">COE_subsidiaries por dia</h4>
+      <h4 class="m-0">${jrEsc(dayTitle)}</h4>
     </div>
     <div class="rp-pair">
       <div class="rp-pane"><div class="table-wrap rp-fit">${jrCoeTable('COE', dayColumns, subs, dayPick)}</div></div>
-      <div class="rp-pane"><div class="rp-chart-wrap">${jrCoeChart(subs, dayColumns, daySeries, dayPick, 'Tickets por subsidiary e dia')}</div></div>
+      <div class="rp-pane"><div class="rp-chart-wrap">${jrCoeChart(subs, dayColumns, daySeries, dayPick, dayTitle)}</div></div>
     </div>
     <div class="section-title mt-4">
-      <h4 class="m-0">COE_subsidiaries por faixa</h4>
+      <h4 class="m-0">${jrEsc(bandTitle)}</h4>
     </div>
     <div class="rp-pair">
       <div class="rp-pane"><div class="table-wrap rp-fit">${jrCoeTable('SUB', bandColumns, subs, bandPick)}</div></div>
-      <div class="rp-pane"><div class="rp-chart-wrap">${jrCoeChart(subs, bandColumns, bandSeries, bandPick, 'Tickets por subsidiary e faixa')}</div></div>
+      <div class="rp-pane"><div class="rp-chart-wrap">${jrCoeChart(subs, bandColumns, bandSeries, bandPick, bandTitle)}</div></div>
     </div>`;
 }
 
