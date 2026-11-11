@@ -119,6 +119,17 @@ function jiraError(data, status, rawText, token) {
   return err;
 }
 
+function fieldsUrl(baseUrl) {
+  const url = new URL(baseUrl);
+  const prefix = url.pathname.replace(/\/+$/, '').replace(/\/rest\/api\/\d+\/search$/i, '');
+  url.pathname = `${prefix}/rest/api/2/field`.replace(/\/{2,}/g, '/');
+  url.search = '';
+  url.hash = '';
+  url.username = '';
+  url.password = '';
+  return url;
+}
+
 function issueChangelogUrl(baseUrl, key) {
   if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(key || '')) {
     const err = new Error('Chave de ticket inválida.');
@@ -137,9 +148,11 @@ function issueChangelogUrl(baseUrl, key) {
 }
 
 async function jiraCall(config, url, method, body, fetchImpl) {
+  const fieldList = method === 'GET' && url.pathname.endsWith('/rest/api/2/field') && !url.search;
+  const changelog = method === 'GET' && /\/rest\/api\/2\/issue\/[^/]+$/.test(url.pathname) && url.searchParams.get('expand') === 'changelog';
   const allowed = method === 'POST'
     ? url.pathname.endsWith('/rest/api/2/search')
-    : method === 'GET' && /\/rest\/api\/2\/issue\/[^/]+$/.test(url.pathname) && url.searchParams.get('expand') === 'changelog';
+    : fieldList || changelog;
   if (!allowed) {
     const err = new Error('Consulta Jira bloqueada.');
     err.status = 500;
@@ -181,6 +194,16 @@ async function jiraPost(config, body, fetchImpl) {
   return jiraCall(config, searchUrl(config.baseUrl), 'POST', body, fetchImpl);
 }
 
+async function loadSubsidiaryField(config, fetchImpl) {
+  try {
+    const data = await jiraCall(config, fieldsUrl(config.baseUrl), 'GET', null, fetchImpl);
+    return jira.subsidiaryFieldId(data);
+  } catch (err) {
+    if (err && (err.status === 401 || err.status === 403)) throw err;
+    return '';
+  }
+}
+
 async function loadChangelog(config, key, fetchImpl) {
   if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(key || '')) return [];
   const page = await jiraCall(config, issueChangelogUrl(config.baseUrl, key), 'GET', null, fetchImpl);
@@ -213,7 +236,8 @@ function wholeCount(value) {
 }
 
 function countList(value, size) {
-  if (!Array.isArray(value) || value.length !== size) return null;
+  if (!Array.isArray(value) || (size != null && value.length !== size)) return null;
+  if (!value.length || value.length > 24 && size == null) return null;
   const out = [];
   for (const item of value) {
     const count = wholeCount(item);
@@ -223,13 +247,57 @@ function countList(value, size) {
   return out;
 }
 
+function legacyBands() {
+  return [18, 19, 20, 21].map(hour => ({
+    label: `${hour}h–${hour + 1}h`,
+    from: hour * 60,
+    to: (hour + 1) * 60
+  }));
+}
+
+function bandList(value, size) {
+  if (!Array.isArray(value) || value.length !== size) return null;
+  const out = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') return null;
+    const label = String(item.label || '').trim();
+    const from = wholeCount(item.from);
+    const to = wholeCount(item.to);
+    if (!label || label.length > 20 || /[\u0000-\u001f]/.test(label)) return null;
+    if (from == null || to == null || to <= from || to > 24 * 60) return null;
+    out.push({ label, from, to });
+  }
+  return out;
+}
+
+function subsidiaryList(value, bands) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > 200) return null;
+  const out = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') return null;
+    const name = String(item.name || '').trim();
+    if (!name || name.length > 80 || /[\u0000-\u001f]/.test(name)) return null;
+    const days = countList(item.days, 7);
+    const counts = countList(item.bands, bands);
+    if (!days || !counts) return null;
+    out.push({ name, days, bands: counts });
+  }
+  return out;
+}
+
 function countSlice(value) {
   if (!value || typeof value !== 'object') return null;
   const weekdays = countList(value.weekdays, 7);
-  const hours = countList(value.hours, 4);
+  const hours = countList(value.hours);
   const tickets = wholeCount(value.tickets);
   if (!weekdays || !hours || tickets == null) return null;
-  return { weekdays, hours, tickets };
+  let bands = Array.isArray(value.bands) ? bandList(value.bands, hours.length) : null;
+  if (!bands && hours.length === 4 && value.bands == null) bands = legacyBands();
+  if (!bands) return null;
+  const subsidiaries = subsidiaryList(value.subsidiaries, hours.length);
+  if (!subsidiaries) return null;
+  return { weekdays, hours, bands, subsidiaries, tickets };
 }
 
 function cleanSavedDay(input) {
@@ -352,12 +420,14 @@ async function runSearch(input, fetchImpl = global.fetch, filePath = METRICS_FIL
   }
   const pendingFilters = { ...filters, days: split.pending };
   const config = jiraConfig();
+  const subsidiaryField = await loadSubsidiaryField(config, fetchImpl);
+  const fields = subsidiaryField ? jira.JIRA_FIELDS.concat(subsidiaryField) : jira.JIRA_FIELDS.slice();
   const jql = jira.buildSearchJql(pendingFilters);
-  const collected = await jira.collectIssues(body => jiraPost(config, body, fetchImpl), jql, jira.JIRA_FIELDS);
+  const collected = await jira.collectIssues(body => jiraPost(config, body, fetchImpl), jql, fields);
   for (const issue of collected.issues) {
     issue.changelog = { histories: await loadChangelog(config, issue.key, fetchImpl) };
   }
-  const built = jira.buildRows(collected.issues, pendingFilters);
+  const built = jira.buildRows(collected.issues, { ...pendingFilters, subsidiaryField });
   return {
     jql,
     total: built.rows.length,
@@ -366,6 +436,7 @@ async function runSearch(input, fetchImpl = global.fetch, filePath = METRICS_FIL
     dropped: 0,
     truncated: collected.truncated,
     changelog: true,
+    subsidiaryField,
     issues: built.rows.map(row => ({ ...row, url: browseUrl(config.baseUrl, row.key) })),
     saved: split.saved,
     queried: split.pending

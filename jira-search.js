@@ -3,6 +3,7 @@
 const JIRA_PAGE_SIZE = 50;
 const JIRA_MAX_ISSUES = 1000;
 const JIRA_FIELDS = ['summary', 'status', 'assignee', 'updated'];
+const COE_SUBSIDIARIES_NAME = 'COE_subsidiaries';
 const JIRA_TZ = 'America/Sao_Paulo';
 
 function fail(status, message) {
@@ -307,6 +308,69 @@ function metricParts(change) {
   return zonedParts(change.at);
 }
 
+function fieldKey(name) {
+  return foldStatus(name).replace(/[^a-z0-9]/g, '');
+}
+
+function subsidiaryFieldId(payload) {
+  const list = Array.isArray(payload)
+    ? payload
+    : (payload && Array.isArray(payload.values) ? payload.values : []);
+  const wanted = fieldKey(COE_SUBSIDIARIES_NAME);
+  const matches = list.filter(field => fieldKey(field && (field.name || field.untranslatedName)) === wanted);
+  if (!matches.length) return '';
+  const exact = matches.find(field => (
+    String(field.name || '') === COE_SUBSIDIARIES_NAME
+    || String(field.untranslatedName || '') === COE_SUBSIDIARIES_NAME
+  ));
+  const id = String((exact || matches[0]).id || '');
+  if (!/^(customfield_\d+|[A-Za-z][A-Za-z0-9_]*)$/.test(id)) return '';
+  return id;
+}
+
+function subsidiaryText(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+  if (Array.isArray(value)) return value.map(subsidiaryText).filter(Boolean).join(', ');
+  if (typeof value === 'object') {
+    if (value.value != null && value.value !== '') return subsidiaryText(value.value);
+    if (value.name != null && value.name !== '') return subsidiaryText(value.name);
+  }
+  return '';
+}
+
+function readSubsidiary(fields, fieldId) {
+  const source = fields && fieldId && Object.prototype.hasOwnProperty.call(fields, fieldId)
+    ? fields[fieldId]
+    : (fields && (fields.COE_subsidiaries != null ? fields.COE_subsidiaries : fields.coeSubsidiaries));
+  return subsidiaryText(source) || '(vazio)';
+}
+
+function clockLabel(minutes) {
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  return minute ? `${hour}h${String(minute).padStart(2, '0')}` : `${hour}h`;
+}
+
+function hourBands(timeFrom, timeTo) {
+  if (!isTime(timeFrom || '') || !isTime(timeTo || '')) return [];
+  const start = toMinutes(timeFrom);
+  const end = toMinutes(timeTo);
+  if (end <= start) return [];
+  const bands = [];
+  let cursor = start;
+  while (cursor < end) {
+    const bandEnd = Math.min(end, (Math.floor(cursor / 60) + 1) * 60);
+    bands.push({
+      from: cursor,
+      to: bandEnd,
+      label: `${clockLabel(cursor)}–${clockLabel(bandEnd)}`
+    });
+    cursor = bandEnd;
+  }
+  return bands;
+}
+
 function weekdayIndex(date) {
   const match = String(date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return -1;
@@ -314,10 +378,22 @@ function weekdayIndex(date) {
   return (utc.getUTCDay() + 6) % 7;
 }
 
-function metricsForRows(rows, user, transition) {
+function metricsForRows(rows, user, transition, range) {
+  const bands = hourBands(range && range.timeFrom, range && range.timeTo);
   const weekdays = [0, 0, 0, 0, 0, 0, 0];
-  const hours = [0, 0, 0, 0];
+  const hours = bands.map(() => 0);
+  const subs = new Map();
   const wanted = foldStatus(user);
+  const touch = name => {
+    if (!subs.has(name)) {
+      subs.set(name, {
+        name,
+        days: [0, 0, 0, 0, 0, 0, 0],
+        bands: bands.map(() => 0)
+      });
+    }
+    return subs.get(name);
+  };
   (Array.isArray(rows) ? rows : []).forEach(row => {
     const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
     changes.forEach(change => {
@@ -326,16 +402,23 @@ function metricsForRows(rows, user, transition) {
       if ((transition === 'todo' || transition === 'clarification') && kind !== transition) return;
       if (wanted && change && change.author && !authorMatches(user, change.author)) return;
       const parts = metricParts(change);
-      if (!parts || parts.minutes < 18 * 60 || parts.minutes >= 22 * 60) return;
+      if (!parts) return;
       const day = weekdayIndex(parts.date);
-      const hour = Math.floor(parts.minutes / 60) - 18;
-      if (day < 0 || hour < 0 || hour > 3) return;
+      const band = bands.findIndex(item => parts.minutes >= item.from && parts.minutes < item.to);
+      if (day < 0 || band < 0) return;
       weekdays[day] += 1;
-      hours[hour] += 1;
+      hours[band] += 1;
+      const rec = touch(subsidiaryText(change && change.subsidiary) || '(vazio)');
+      rec.days[day] += 1;
+      rec.bands[band] += 1;
     });
   });
   const tickets = weekdays.reduce((sum, count) => sum + count, 0);
-  return { weekdays, hours, tickets };
+  const subsidiaries = Array.from(subs.values()).sort((a, b) => {
+    const total = rec => rec.days.reduce((sum, count) => sum + count, 0);
+    return total(b) - total(a) || a.name.localeCompare(b.name, 'pt');
+  });
+  return { weekdays, hours, bands, subsidiaries, tickets };
 }
 
 function countMoves(rows) {
@@ -352,7 +435,7 @@ function countMoves(rows) {
   return { all: todo + clarification, todo, clarification };
 }
 
-function toRow(issue, windows, user) {
+function toRow(issue, windows, user, fieldId) {
   const fields = issue && issue.fields ? issue.fields : {};
   const history = statusHistory(issue).map(move => {
     const parts = move.at ? qualifyingParts(move.at, windows) : null;
@@ -368,12 +451,14 @@ function toRow(issue, windows, user) {
   ));
   const kinds = [...new Set(statusMoves.map(move => move.kind))];
   const shown = statusMoves;
+  const subsidiary = readSubsidiary(fields, fieldId);
   return {
     key: issue && issue.key ? issue.key : '',
     summary: typeof fields.summary === 'string' ? fields.summary : '',
     status: statusName(fields.status),
     assignee: personName(fields.assignee),
     moveText: shown.map(oneMove).join('\n'),
+    subsidiary,
     kinds,
     inWindow: statusMoves.length > 0,
     payload: {
@@ -391,6 +476,7 @@ function toRow(issue, windows, user) {
         date: move.parts.date,
         minutes: move.parts.minutes,
         author: authorNames(move.author).join(' '),
+        subsidiary,
         kind: move.kind,
         text: oneMove(move)
       }))
@@ -403,7 +489,7 @@ function buildRows(issues, filters) {
   const rows = [];
   let dropped = 0;
   issues.forEach(issue => {
-    const row = toRow(issue, windows, filters.user);
+    const row = toRow(issue, windows, filters.user, filters.subsidiaryField);
     if (!row.inWindow) {
       dropped += 1;
       return;
@@ -466,6 +552,9 @@ const jiraSearchApi = {
   JIRA_MAX_ISSUES,
   JIRA_FIELDS,
   JIRA_TZ,
+  COE_SUBSIDIARIES_NAME,
+  subsidiaryFieldId,
+  hourBands,
   assertSearchInput,
   buildSearchJql,
   statusMoveKind,

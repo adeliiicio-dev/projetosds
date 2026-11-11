@@ -8,6 +8,8 @@ const server = require('./server');
 const EMPTY_METRICS = path.join(os.tmpdir(), `sds-metrics-empty-${process.pid}.json`);
 
 const FILTERS = { user: 'Ada', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] };
+const RANGE_18_22 = { timeFrom: '18:00', timeTo: '22:00' };
+const RANGE_18_19 = { timeFrom: '18:00', timeTo: '19:00' };
 
 function issue(key, extra) {
   const author = !Object.prototype.hasOwnProperty.call(extra, 'author')
@@ -146,9 +148,10 @@ async function testWindowsAndMoves() {
   assert.equal(mixed.rows[0].moveText.includes('Done'), false);
   assert.equal(mixed.rows[0].moveText.includes('Bruno'), false);
   assert.equal(mixed.rows[0].moveText.includes('Adelino'), false);
-  const mixedMetrics = jira.metricsForRows(mixed.rows, 'Ade');
+  const mixedMetrics = jira.metricsForRows(mixed.rows, 'Ade', 'all', RANGE_18_19);
   assert.equal(mixedMetrics.tickets, 1);
-  assert.deepEqual(mixedMetrics.hours, [1, 0, 0, 0]);
+  assert.deepEqual(mixedMetrics.hours, [1]);
+  assert.deepEqual(mixedMetrics.bands.map(band => band.label), ['18h–19h']);
   const foreign = jira.metricsForRows([{
     key: 'LC-12',
     payload: {
@@ -157,7 +160,7 @@ async function testWindowsAndMoves() {
         { from: 'To do', to: 'Done', at: '2026-11-10T18:45:00.000-0300', author: 'Bruno Costa' }
       ]
     }
-  }], 'Ade');
+  }], 'Ade', 'all', RANGE_18_22);
   assert.equal(foreign.tickets, 1);
   assert.equal(foreign.hours[0], 1);
 
@@ -176,7 +179,7 @@ async function testWindowsAndMoves() {
     { key: 'LC-32', payload: { statusChanges: [{ from: 'Request', to: 'To do', at: '2026-11-11T18:10:00.000-0300' }] } },
     { key: 'LC-33', payload: { statusChanges: [{ from: 'Request', to: 'To do', at: '2026-11-10T22:00:00.000-0300' }] } },
     { key: 'LC-34', payload: { statusChanges: [{ from: 'Request', to: 'To do', at: '2026-11-10T15:20:00.000-0300' }] } }
-  ]);
+  ], '', 'all', RANGE_18_22);
   assert.deepEqual(metrics.weekdays, [0, 3, 1, 0, 0, 0, 0]);
   assert.deepEqual(metrics.hours, [3, 0, 0, 1]);
   assert.equal(metrics.tickets, 4);
@@ -214,9 +217,9 @@ async function testWindowsAndMoves() {
   assert.equal(moveCounts.todo, 1);
   assert.equal(moveCounts.clarification, 1);
   assert.equal(moveCounts.todo + moveCounts.clarification, moveCounts.all);
-  const todoOnly = jira.metricsForRows(both.rows, 'Adelino Souza', 'todo');
-  const clarOnly = jira.metricsForRows(both.rows, 'Adelino Souza', 'clarification');
-  const bothMetrics = jira.metricsForRows(both.rows, 'Adelino Souza', 'all');
+  const todoOnly = jira.metricsForRows(both.rows, 'Adelino Souza', 'todo', RANGE_18_19);
+  const clarOnly = jira.metricsForRows(both.rows, 'Adelino Souza', 'clarification', RANGE_18_19);
+  const bothMetrics = jira.metricsForRows(both.rows, 'Adelino Souza', 'all', RANGE_18_19);
   assert.equal(todoOnly.tickets, moveCounts.todo);
   assert.equal(clarOnly.tickets, moveCounts.clarification);
   assert.equal(bothMetrics.tickets, moveCounts.all);
@@ -233,7 +236,7 @@ async function testWindowsAndMoves() {
     })
   ], { user: 'Ade', timeFrom: '18:00', timeTo: '22:00', days: ['2026-11-10'] });
   assert.equal(utc.rows.length, 1);
-  const utcMetrics = jira.metricsForRows(utc.rows, 'Ade', 'todo');
+  const utcMetrics = jira.metricsForRows(utc.rows, 'Ade', 'todo', RANGE_18_22);
   assert.equal(utcMetrics.tickets, 1);
   assert.equal(utcMetrics.hours[0], 1);
   assert.equal(utcMetrics.tickets, jira.countMoves(utc.rows).todo);
@@ -248,10 +251,45 @@ async function testWindowsAndMoves() {
         { from: 'Request', to: 'Done', at: '2026-11-10T22:00:00.000-0300', author: 'Adelino Souza', kind: '' }
       ]
     }
-  }], 'Adelino Souza');
+  }], 'Adelino Souza', 'all', RANGE_18_22);
   assert.deepEqual(split.hours, [1, 0, 0, 1]);
   assert.equal(split.weekdays.reduce((sum, count) => sum + count, 0), 2);
   assert.equal(split.hours.reduce((sum, count) => sum + count, 0), 2);
+
+  const late = jira.metricsForRows([{
+    payload: {
+      statusChanges: [
+        { from: 'Request', to: 'To do', at: '2026-11-10T22:10:00.000-0300', kind: 'todo', subsidiary: 'Brasil' },
+        { from: 'Request', to: 'Clarification', at: '2026-11-10T21:10:00.000-0300', kind: 'clarification', subsidiary: 'Chile' }
+      ]
+    }
+  }], '', 'all', { timeFrom: '21:00', timeTo: '23:00' });
+  assert.deepEqual(late.bands.map(band => band.label), ['21h–22h', '22h–23h']);
+  assert.deepEqual(late.hours, [1, 1]);
+  assert.equal(late.tickets, 2);
+  assert.equal(late.subsidiaries.find(rec => rec.name === 'Brasil').bands[1], 1);
+  assert.equal(late.weekdays.reduce((sum, count) => sum + count, 0), late.hours.reduce((sum, count) => sum + count, 0));
+  assert.deepEqual(jira.hourBands('18:30', '20:15').map(band => band.label), ['18h30–19h', '19h–20h', '20h–20h15']);
+  assert.equal(jira.subsidiaryFieldId([
+    { id: 'customfield_10001', name: 'Other' },
+    { id: 'customfield_10234', name: 'COE_subsidiaries' }
+  ]), 'customfield_10234');
+
+  const owned = issue('LC-70', {
+    from: 'Request',
+    to: 'To do',
+    at: '2026-11-10T18:20:00.000-0300',
+    updated: '2026-11-10T18:20:00.000-0300',
+    summary: 'Brasil'
+  });
+  owned.fields.customfield_10234 = { value: 'Brasil' };
+  const withSub = jira.buildRows([owned], { ...FILTERS, subsidiaryField: 'customfield_10234' });
+  assert.equal(withSub.rows[0].subsidiary, 'Brasil');
+  assert.equal(withSub.rows[0].payload.statusChanges[0].subsidiary, 'Brasil');
+  const subMetrics = jira.metricsForRows(withSub.rows, 'Ada', 'all', RANGE_18_19);
+  assert.equal(subMetrics.subsidiaries[0].name, 'Brasil');
+  assert.equal(subMetrics.subsidiaries[0].days[1], 1);
+  assert.equal(subMetrics.subsidiaries[0].bands[0], 1);
 }
 
 async function testPaging() {
@@ -342,6 +380,16 @@ async function testHttp() {
   const fetchImpl = async (url, options) => {
     calls.push({ url: String(url), method: options.method, redirect: options.redirect, headers: options.headers, body: options.body });
     const href = String(url);
+    if (href.endsWith('/rest/api/2/field')) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify([
+          { id: 'customfield_10001', name: 'Other' },
+          { id: 'customfield_10234', name: 'COE_subsidiaries' }
+        ])
+      };
+    }
     if (href.includes('/changelog')) {
       return { ok: false, status: 404, text: async () => 'HTTP 404 Not Found' };
     }
@@ -364,6 +412,7 @@ async function testHttp() {
     assert.equal(options.body.includes(token), false);
     const bare = { ...sample };
     delete bare.changelog;
+    bare.fields = { ...bare.fields, customfield_10234: { value: 'Brasil' } };
     return {
       ok: true,
       status: 200,
@@ -390,12 +439,17 @@ async function testHttp() {
     assert.equal(data.total, 1);
     assert.equal(data.fetched, 1);
     assert.equal(data.matched, 1);
-    assert.equal(calls.length, 2);
-    assert.equal(calls[0].redirect, 'error');
-    assert.equal(calls[0].headers.Authorization, `Bearer ${token}`);
-    assert.equal(String(calls[0].url), 'http://jira.example/jira/rest/api/2/search');
-    assert.equal(calls[1].method, 'GET');
-    assert.match(String(calls[1].url), /\/rest\/api\/2\/issue\/LC-7\?expand=changelog$/);
+    assert.equal(data.subsidiaryField, 'customfield_10234');
+    assert.equal(data.issues[0].subsidiary, 'Brasil');
+    assert.equal(calls.length, 3);
+    assert.equal(calls[0].method, 'GET');
+    assert.equal(String(calls[0].url), 'http://jira.example/jira/rest/api/2/field');
+    assert.equal(calls[1].redirect, 'error');
+    assert.equal(calls[1].headers.Authorization, `Bearer ${token}`);
+    assert.equal(String(calls[1].url), 'http://jira.example/jira/rest/api/2/search');
+    assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_10234'));
+    assert.equal(calls[2].method, 'GET');
+    assert.match(String(calls[2].url), /\/rest\/api\/2\/issue\/LC-7\?expand=changelog$/);
     assert.equal(String(calls[1].url).includes('/changelog'), false);
 
     const deniedFetch = async () => ({
@@ -445,6 +499,9 @@ async function testHttp() {
     });
     const mismatchFetch = async (url, options) => {
       const href = String(url);
+      if (href.endsWith('/rest/api/2/field')) {
+        return { ok: true, status: 200, text: async () => '[]' };
+      }
       if (href.includes('/changelog')) {
         return { ok: false, status: 404, text: async () => 'HTTP 404 Not Found' };
       }
@@ -545,23 +602,25 @@ async function testSavedDays() {
     }))).body);
     assert.deepEqual(mixed.queried, ['2026-11-11']);
     assert.equal(mixed.saved[0].date, '2026-11-10');
-    assert.equal(calls.length, 1);
-    assert.equal(JSON.parse(calls[0].body).jql.includes('2026/11/10'), false);
-    assert.equal(JSON.parse(calls[0].body).jql.includes('2026/11/11'), true);
+    const firstPosts = calls.filter(call => call.method === 'POST');
+    assert.equal(firstPosts.length, 1);
+    assert.equal(JSON.parse(firstPosts[0].body).jql.includes('2026/11/10'), false);
+    assert.equal(JSON.parse(firstPosts[0].body).jql.includes('2026/11/11'), true);
 
     const again = JSON.parse((await requestOnce(port, 'POST', '/api/jira/search', JSON.stringify({
       user: 'ada', timeFrom: '18:00', timeTo: '22:00', days: ['2026-11-10']
     }))).body);
     assert.deepEqual(again.queried, []);
     assert.equal(again.issues.length, 0);
-    assert.equal(calls.length, 1);
+    assert.equal(calls.filter(call => call.method === 'POST').length, 1);
 
     const other = JSON.parse((await requestOnce(port, 'POST', '/api/jira/search', JSON.stringify({
       user: 'Bruno', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10']
     }))).body);
     assert.deepEqual(other.queried, ['2026-11-10']);
-    assert.equal(calls.length, 2);
-    assert.equal(JSON.parse(calls[1].body).jql.includes('2026/11/10'), true);
+    const posts = calls.filter(call => call.method === 'POST');
+    assert.equal(posts.length, 2);
+    assert.equal(JSON.parse(posts[1].body).jql.includes('2026/11/10'), true);
 
     const bad = await requestOnce(port, 'POST', '/api/jira/metrics', JSON.stringify({ date: 'ontem', user: 'Ada', counts }));
     assert.equal(bad.status, 400);
@@ -585,7 +644,8 @@ function testSources() {
   assert.equal(/\/rest\/api\/2\/issue\/[^'"`\s]*\/changelog/.test(src), false);
   const ui = fs.readFileSync(path.join(__dirname, 'jira-ui.js'), 'utf8');
   assert.equal(ui.includes('rpBars'), false);
-  assert.equal(ui.includes('rp-chart'), false);
+  assert.equal(ui.includes('rpMatrixChart'), true);
+  assert.equal(/<svg class="rp-chart"/.test(ui), false);
   assert.equal(src.includes('foram alterados'), false);
   assert.equal(src.includes('O Jira devolveu'), false);
   assert.equal(/\btransitions\b/.test(src), false);

@@ -12,6 +12,14 @@ const JR_DAY_SHORT = (typeof RP_DAYS !== 'undefined' ? RP_DAYS : [
   { short: 'Sex' }, { short: 'Sáb' }, { short: 'Dom' }
 ]).map(day => day.short);
 
+const JR_DAY_COLORS = (typeof RP_DAY_COLORS !== 'undefined')
+  ? RP_DAY_COLORS
+  : ['#6b86ff', '#38bdf8', '#34d399', '#fbbf24', '#f87171', '#c084fc', '#fb7185'];
+
+const JR_BAND_COLORS = (typeof RP_SLOT_COLORS !== 'undefined')
+  ? RP_SLOT_COLORS
+  : ['#6b86ff', '#38bdf8', '#fbbf24', '#f87171'];
+
 const JR_USER_KEY = 'sds-report-v2-user';
 
 function jrLoadUser() {
@@ -43,6 +51,7 @@ const jrState = {
   error: '',
   savedDays: [],
   period: 'current',
+  range: null,
   picked: new Set(),
   saveNote: '',
   saving: false
@@ -183,20 +192,66 @@ function jrSavedForCurrent() {
 }
 
 function jrSlice(rows, transition) {
-  const metrics = jiraSearch.metricsForRows(rows, jrCurrentUser(), transition);
-  return { weekdays: metrics.weekdays.slice(), hours: metrics.hours.slice(), tickets: metrics.tickets };
+  const metrics = jiraSearch.metricsForRows(rows, jrCurrentUser(), transition, jrState.range);
+  return {
+    weekdays: metrics.weekdays.slice(),
+    hours: metrics.hours.slice(),
+    bands: metrics.bands.map(band => ({ label: band.label, from: band.from, to: band.to })),
+    subsidiaries: metrics.subsidiaries.map(rec => ({
+      name: rec.name,
+      days: rec.days.slice(),
+      bands: rec.bands.slice()
+    })),
+    tickets: metrics.tickets
+  };
+}
+
+function jrSliceBands(slice) {
+  if (slice && Array.isArray(slice.bands) && slice.bands.length) return slice.bands;
+  return (slice && slice.hours || []).map((_, index) => ({ label: `Faixa ${index + 1}` }));
 }
 
 function jrSumSlices(list) {
   const weekdays = [0, 0, 0, 0, 0, 0, 0];
-  const hours = [0, 0, 0, 0];
+  const bands = [];
+  const bandAt = new Map();
+  list.forEach(slice => {
+    jrSliceBands(slice).forEach(band => {
+      if (!bandAt.has(band.label)) {
+        bandAt.set(band.label, bands.length);
+        bands.push({ label: band.label, from: band.from, to: band.to });
+      }
+    });
+  });
+  const hours = bands.map(() => 0);
+  const subs = new Map();
+  const ensure = name => {
+    if (!subs.has(name)) subs.set(name, { name, days: [0, 0, 0, 0, 0, 0, 0], bands: bands.map(() => 0) });
+    return subs.get(name);
+  };
   let tickets = 0;
   list.forEach(slice => {
-    (slice.weekdays || []).forEach((count, index) => { weekdays[index] += count; });
-    (slice.hours || []).forEach((count, index) => { hours[index] += count; });
+    (slice.weekdays || []).forEach((count, index) => { if (index < 7) weekdays[index] += count; });
+    const sliceBands = jrSliceBands(slice);
+    (slice.hours || []).forEach((count, index) => {
+      const at = bandAt.get(sliceBands[index] && sliceBands[index].label);
+      if (at != null) hours[at] += count;
+    });
     tickets += slice.tickets || 0;
+    (slice.subsidiaries || []).forEach(rec => {
+      const row = ensure(rec.name);
+      (rec.days || []).forEach((count, index) => { if (index < 7) row.days[index] += count; });
+      (rec.bands || []).forEach((count, index) => {
+        const at = bandAt.get(sliceBands[index] && sliceBands[index].label);
+        if (at != null) row.bands[at] += count;
+      });
+    });
   });
-  return { weekdays, hours, tickets };
+  const subsidiaries = Array.from(subs.values()).sort((a, b) => {
+    const total = rec => rec.days.reduce((sum, count) => sum + count, 0);
+    return total(b) - total(a) || a.name.localeCompare(b.name, 'pt');
+  });
+  return { weekdays, hours, bands, subsidiaries, tickets };
 }
 
 function jrCountTable(caption, items) {
@@ -233,11 +288,13 @@ function jrRenderMetrics() {
       ? 'Números lidos do arquivo, só Request → To do e Request → Clarification dessa pessoa, sem nova consulta ao Jira.'
       : 'Escolha ao menos um dia salvo dessa pessoa.';
   } else {
-    metrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser(), jrState.transition);
-    source = 'Números da consulta atual, no mesmo filtro da tabela, entre 18h e 22h. 22h fica de fora.';
+    metrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser(), jrState.transition, jrState.range);
+    const from = jrState.range ? jrState.range.timeFrom : '';
+    const to = jrState.range ? jrState.range.timeTo : '';
+    source = `Números da consulta atual, no mesmo filtro da tabela, entre ${from} e ${to}.`;
   }
   const days = JR_DAY_SHORT.map((label, index) => ({ label, value: metrics.weekdays[index] || 0 }));
-  const hours = JR_SLOTS.map((slot, index) => ({ label: slot.label, value: metrics.hours[index] || 0 }));
+  const hours = (metrics.bands || []).map((band, index) => ({ label: band.label, value: metrics.hours[index] || 0 }));
   const noun = metrics.tickets === 1 ? 'mudança' : 'mudanças';
   const savedBoxes = ownSaved.map(day => {
     const key = jrDayKey(day);
@@ -262,12 +319,71 @@ function jrRenderMetrics() {
     </div>
     <div class="jr-days mb-3">${savedBoxes}</div>
     ${saveRow}
-    <p class="muted mb-3">${metrics.tickets} ${noun} dele entre 18h e 22h, no horário de Brasília. ${jrEsc(source)} Cada mudança entra em um dia e em uma hora.</p>
+    <p class="muted mb-3">${metrics.tickets} ${noun} dele na faixa escolhida, no horário de Brasília. ${jrEsc(source)} Cada mudança entra em um dia e em uma faixa.</p>
     <div class="rp-pair">
       <div class="rp-pane">${jrCountTable('Dia', days)}</div>
       <div class="rp-pane">${jrCountTable('Hora', hours)}</div>
     </div>
+    ${jrCoeBlock(metrics)}
   </div>`;
+}
+
+function jrCoeTable(first, columns, subs, pick) {
+  if (!subs.length) return '<p class="muted mb-0">Nenhum COE_subsidiaries ainda.</p>';
+  const peaks = columns.map(col => subs.reduce((max, rec) => Math.max(max, pick(rec, col) || 0), 0));
+  const body = subs.map(rec => {
+    const cells = columns.map((col, index) => {
+      const value = pick(rec, col) || 0;
+      const win = peaks[index] > 0 && value === peaks[index] ? ' rp-win' : '';
+      return `<td class="num${win}">${value}</td>`;
+    }).join('');
+    const total = columns.reduce((sum, col) => sum + (pick(rec, col) || 0), 0);
+    return `<tr><th class="rp-name">${jrEsc(rec.name)}</th>${cells}<td class="num">${total}</td></tr>`;
+  }).join('');
+  const foot = columns.map(col => `<th class="num">${subs.reduce((sum, rec) => sum + (pick(rec, col) || 0), 0)}</th>`).join('');
+  const grand = subs.reduce((sum, rec) => sum + columns.reduce((inner, col) => inner + (pick(rec, col) || 0), 0), 0);
+  const head = columns.map(col => `<th>${jrEsc(col.label)}</th>`).join('');
+  return `<table class="table table-sm table-dark table-bordered mb-0 rp-table">
+    <thead><tr><th>${jrEsc(first)}</th>${head}<th>Total</th></tr></thead>
+    <tbody>${body}</tbody>
+    <tfoot><tr><th>Total</th>${foot}<th class="num">${grand}</th></tr></tfoot>
+  </table>`;
+}
+
+function jrCoeChart(subs, columns, series, pick, title) {
+  if (typeof rpMatrixChart !== 'function') return '';
+  const groups = (subs.length ? subs : [{ name: '—' }]).map(rec => ({
+    label: rec.name,
+    values: columns.map(col => pick(rec, col) || 0)
+  }));
+  return rpMatrixChart(groups, series, title);
+}
+
+function jrCoeBlock(metrics) {
+  const subs = metrics.subsidiaries || [];
+  const dayColumns = JR_DAY_SHORT.map((label, index) => ({ label, index }));
+  const daySeries = dayColumns.map((col, index) => ({ label: col.label, color: JR_DAY_COLORS[index] }));
+  const bandColumns = (metrics.bands || []).map((band, index) => ({ label: band.label, index }));
+  const bandSeries = bandColumns.map((col, index) => ({
+    label: col.label,
+    color: JR_BAND_COLORS[index % JR_BAND_COLORS.length]
+  }));
+  const dayPick = (rec, col) => (rec.days || [])[col.index] || 0;
+  const bandPick = (rec, col) => (rec.bands || [])[col.index] || 0;
+  return `<div class="section-title mt-4">
+      <h4 class="m-0">COE_subsidiaries por dia</h4>
+    </div>
+    <div class="rp-pair">
+      <div class="rp-pane"><div class="table-wrap rp-fit">${jrCoeTable('COE', dayColumns, subs, dayPick)}</div></div>
+      <div class="rp-pane"><div class="rp-chart-wrap">${jrCoeChart(subs, dayColumns, daySeries, dayPick, 'Tickets por subsidiary e dia')}</div></div>
+    </div>
+    <div class="section-title mt-4">
+      <h4 class="m-0">COE_subsidiaries por faixa</h4>
+    </div>
+    <div class="rp-pair">
+      <div class="rp-pane"><div class="table-wrap rp-fit">${jrCoeTable('SUB', bandColumns, subs, bandPick)}</div></div>
+      <div class="rp-pane"><div class="rp-chart-wrap">${jrCoeChart(subs, bandColumns, bandSeries, bandPick, 'Tickets por subsidiary e faixa')}</div></div>
+    </div>`;
 }
 
 function jrMoveText(row, transition) {
@@ -340,12 +456,10 @@ function jrRenderResults() {
   const noun = selected === 1 ? 'mudança' : 'mudanças';
   meta.innerHTML = `<p class="muted mb-2">${selected} ${noun} neste filtro.</p>${notes.map(note => `<p class="muted mb-2">${jrEsc(note)}</p>`).join('')}`;
   table.innerHTML = visible.length ? `<div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
-      <thead><tr><th>Key</th><th>Summary</th><th>Status</th><th>Assignee</th><th>Movimento</th></tr></thead>
+      <thead><tr><th>Key</th><th>Summary</th><th>Movimento</th></tr></thead>
       <tbody>${visible.map(row => `<tr>
         <td>${jrKeyCell(row)}</td>
         <td class="jr-summary" title="${jrEsc(row.summary)}">${jrEsc(row.summary || '—')}</td>
-        <td>${jrEsc(row.status || '—')}</td>
-        <td>${jrEsc(row.assignee || '—')}</td>
         <td class="jr-move">${jrEsc(jrMoveText(row, jrState.transition) || '—')}</td>
       </tr>`).join('')}</tbody>
     </table></div>` : '<p class="muted mb-0">Nenhum ticket para este filtro.</p>';
@@ -403,6 +517,7 @@ async function jrConsult(event) {
     try { data = await response.json(); } catch { data = null; }
     if (!response.ok) throw new Error(data && data.error || 'Não foi possível consultar o Jira.');
     jrState.info = data;
+    jrState.range = { timeFrom, timeTo };
     jrState.issues = Array.isArray(data.issues) ? data.issues : [];
     jrState.error = '';
     jrState.period = 'current';
