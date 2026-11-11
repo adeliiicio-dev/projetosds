@@ -383,6 +383,7 @@ function metricsForRows(rows, user, transition, range) {
   const weekdays = [0, 0, 0, 0, 0, 0, 0];
   const hours = bands.map(() => 0);
   const subs = new Map();
+  const chosen = new Map();
   const wanted = foldStatus(user);
   const touch = name => {
     if (!subs.has(name)) {
@@ -394,9 +395,10 @@ function metricsForRows(rows, user, transition, range) {
     }
     return subs.get(name);
   };
-  (Array.isArray(rows) ? rows : []).forEach(row => {
+  (Array.isArray(rows) ? rows : []).forEach((row, rowIndex) => {
     const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
-    changes.forEach(change => {
+    const id = row && row.key ? String(row.key) : `row-${rowIndex}`;
+    changes.forEach((change, changeIndex) => {
       const kind = changeKind(change);
       if (kind !== 'todo' && kind !== 'clarification') return;
       if ((transition === 'todo' || transition === 'clarification') && kind !== transition) return;
@@ -406,12 +408,19 @@ function metricsForRows(rows, user, transition, range) {
       const day = weekdayIndex(parts.date);
       const band = bands.findIndex(item => parts.minutes >= item.from && parts.minutes < item.to);
       if (day < 0 || band < 0) return;
-      weekdays[day] += 1;
-      hours[band] += 1;
-      const rec = touch(subsidiaryText(change && change.subsidiary) || '(vazio)');
-      rec.days[day] += 1;
-      rec.bands[band] += 1;
+      const parsed = Date.parse(change && change.at);
+      const instant = Number.isFinite(parsed) ? parsed : changeIndex;
+      const current = chosen.get(id);
+      if (current && (instant < current.instant || (instant === current.instant && changeIndex <= current.changeIndex))) return;
+      chosen.set(id, { change, day, band, instant, changeIndex });
     });
+  });
+  chosen.forEach(item => {
+    weekdays[item.day] += 1;
+    hours[item.band] += 1;
+    const rec = touch(subsidiaryText(item.change && item.change.subsidiary) || '(vazio)');
+    rec.days[item.day] += 1;
+    rec.bands[item.band] += 1;
   });
   const tickets = weekdays.reduce((sum, count) => sum + count, 0);
   const subsidiaries = Array.from(subs.values()).sort((a, b) => {

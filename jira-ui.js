@@ -258,7 +258,7 @@ function jrCountTable(caption, items) {
   const body = items.map(item => `<tr><th>${jrEsc(item.label)}</th><td class="num">${item.value}</td></tr>`).join('');
   const total = items.reduce((sum, item) => sum + item.value, 0);
   return `<div class="table-wrap rp-fit"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
-    <thead><tr><th>${jrEsc(caption)}</th><th>Mudanças</th></tr></thead>
+    <thead><tr><th>${jrEsc(caption)}</th><th>Tickets</th></tr></thead>
     <tbody>${body}</tbody>
     <tfoot><tr><th>Total</th><th class="num">${total}</th></tr></tfoot>
   </table></div>`;
@@ -295,7 +295,7 @@ function jrRenderMetrics() {
   }
   const days = JR_DAY_SHORT.map((label, index) => ({ label, value: metrics.weekdays[index] || 0 }));
   const hours = (metrics.bands || []).map((band, index) => ({ label: band.label, value: metrics.hours[index] || 0 }));
-  const noun = metrics.tickets === 1 ? 'mudança' : 'mudanças';
+  const noun = metrics.tickets === 1 ? 'ticket' : 'tickets';
   const savedBoxes = ownSaved.map(day => {
     const key = jrDayKey(day);
     const checked = jrState.picked.has(key) ? ' checked' : '';
@@ -319,7 +319,7 @@ function jrRenderMetrics() {
     </div>
     <div class="jr-days mb-3">${savedBoxes}</div>
     ${saveRow}
-    <p class="muted mb-3">${metrics.tickets} ${noun} dele na faixa escolhida, no horário de Brasília. ${jrEsc(source)} Cada mudança entra em um dia e em uma faixa.</p>
+    <p class="muted mb-3">${metrics.tickets} ${noun} dele na faixa escolhida, no horário de Brasília. ${jrEsc(source)} Cada ticket entra uma vez, no dia e na faixa da última mudança dele nesse período.</p>
     <div class="rp-pair">
       <div class="rp-pane">${jrCountTable('Dia', days)}</div>
       <div class="rp-pane">${jrCountTable('Hora', hours)}</div>

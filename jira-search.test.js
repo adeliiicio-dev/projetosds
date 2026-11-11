@@ -180,9 +180,9 @@ async function testWindowsAndMoves() {
     { key: 'LC-33', payload: { statusChanges: [{ from: 'Request', to: 'To do', at: '2026-11-10T22:00:00.000-0300' }] } },
     { key: 'LC-34', payload: { statusChanges: [{ from: 'Request', to: 'To do', at: '2026-11-10T15:20:00.000-0300' }] } }
   ], '', 'all', RANGE_18_22);
-  assert.deepEqual(metrics.weekdays, [0, 3, 1, 0, 0, 0, 0]);
-  assert.deepEqual(metrics.hours, [3, 0, 0, 1]);
-  assert.equal(metrics.tickets, 4);
+  assert.deepEqual(metrics.weekdays, [0, 2, 1, 0, 0, 0, 0]);
+  assert.deepEqual(metrics.hours, [2, 0, 0, 1]);
+  assert.equal(metrics.tickets, 3);
   assert.equal(metrics.weekdays.reduce((sum, count) => sum + count, 0), metrics.hours.reduce((sum, count) => sum + count, 0));
 
   const both = jira.buildRows([
@@ -220,9 +220,10 @@ async function testWindowsAndMoves() {
   const todoOnly = jira.metricsForRows(both.rows, 'Adelino Souza', 'todo', RANGE_18_19);
   const clarOnly = jira.metricsForRows(both.rows, 'Adelino Souza', 'clarification', RANGE_18_19);
   const bothMetrics = jira.metricsForRows(both.rows, 'Adelino Souza', 'all', RANGE_18_19);
-  assert.equal(todoOnly.tickets, moveCounts.todo);
-  assert.equal(clarOnly.tickets, moveCounts.clarification);
-  assert.equal(bothMetrics.tickets, moveCounts.all);
+  assert.equal(todoOnly.tickets, 1);
+  assert.equal(clarOnly.tickets, 1);
+  assert.equal(bothMetrics.tickets, 1);
+  assert.equal(moveCounts.all, 2);
   assert.equal(todoOnly.weekdays.reduce((sum, count) => sum + count, 0), todoOnly.hours.reduce((sum, count) => sum + count, 0));
 
   const utc = jira.buildRows([
@@ -252,9 +253,9 @@ async function testWindowsAndMoves() {
       ]
     }
   }], 'Adelino Souza', 'all', RANGE_18_22);
-  assert.deepEqual(split.hours, [1, 0, 0, 1]);
-  assert.equal(split.weekdays.reduce((sum, count) => sum + count, 0), 2);
-  assert.equal(split.hours.reduce((sum, count) => sum + count, 0), 2);
+  assert.deepEqual(split.hours, [0, 0, 0, 1]);
+  assert.equal(split.weekdays.reduce((sum, count) => sum + count, 0), 1);
+  assert.equal(split.hours.reduce((sum, count) => sum + count, 0), 1);
 
   const late = jira.metricsForRows([{
     payload: {
@@ -265,9 +266,11 @@ async function testWindowsAndMoves() {
     }
   }], '', 'all', { timeFrom: '21:00', timeTo: '23:00' });
   assert.deepEqual(late.bands.map(band => band.label), ['21h–22h', '22h–23h']);
-  assert.deepEqual(late.hours, [1, 1]);
-  assert.equal(late.tickets, 2);
-  assert.equal(late.subsidiaries.find(rec => rec.name === 'Brasil').bands[1], 1);
+  assert.deepEqual(late.hours, [0, 1]);
+  assert.equal(late.tickets, 1);
+  assert.equal(late.subsidiaries.length, 1);
+  assert.equal(late.subsidiaries[0].name, 'Brasil');
+  assert.equal(late.subsidiaries[0].bands[1], 1);
   assert.equal(late.weekdays.reduce((sum, count) => sum + count, 0), late.hours.reduce((sum, count) => sum + count, 0));
   assert.deepEqual(jira.hourBands('18:30', '20:15').map(band => band.label), ['18h30–19h', '19h–20h', '20h–20h15']);
   assert.equal(jira.subsidiaryFieldId([
@@ -290,6 +293,25 @@ async function testWindowsAndMoves() {
   assert.equal(subMetrics.subsidiaries[0].name, 'Brasil');
   assert.equal(subMetrics.subsidiaries[0].days[1], 1);
   assert.equal(subMetrics.subsidiaries[0].bands[0], 1);
+
+  const later = jira.metricsForRows([{
+    key: 'LC-80',
+    payload: {
+      statusChanges: [
+        { from: 'Request', to: 'Clarification', at: '2026-11-10T18:10:00.000-0300', kind: 'clarification', subsidiary: 'Brasil' },
+        { from: 'Request', to: 'To do', at: '2026-11-10T19:40:00.000-0300', kind: 'todo', subsidiary: 'Brasil' }
+      ]
+    }
+  }], '', 'all', { timeFrom: '18:00', timeTo: '20:00' });
+  assert.equal(jira.countMoves([{ payload: { statusChanges: [
+    { kind: 'clarification' },
+    { kind: 'todo' }
+  ] } }]).all, 2);
+  assert.deepEqual(later.hours, [0, 1]);
+  assert.equal(later.tickets, 1);
+  assert.equal(later.subsidiaries[0].bands[0], 0);
+  assert.equal(later.subsidiaries[0].bands[1], 1);
+  assert.equal(later.weekdays.reduce((sum, count) => sum + count, 0), later.hours.reduce((sum, count) => sum + count, 0));
 }
 
 async function testPaging() {
