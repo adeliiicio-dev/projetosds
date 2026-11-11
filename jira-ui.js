@@ -398,6 +398,81 @@ function jrExtraTables(name) {
   return `<div class="rp-pair mt-3">
     <div class="rp-pane">${types}<div class="mt-3">${fixed}</div></div>
     <div class="rp-pane">${jrSlideTable()}</div>
+  </div>
+  ${jrLeadSentences()}`;
+}
+
+function jrTied(items) {
+  const ranked = (items || []).filter(item => item && item.value > 0 && item.label);
+  if (!ranked.length) return { names: 'none', value: 0 };
+  const max = Math.max(...ranked.map(item => item.value));
+  return {
+    names: ranked.filter(item => item.value === max).map(item => item.label).join(', '),
+    value: max
+  };
+}
+
+function jrClockLabel(minutes) {
+  const hour = Math.floor(Number(minutes) / 60);
+  const minute = Number(minutes) % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function jrRangeLabel(bands) {
+  if (jrState.range && jrState.range.timeFrom && jrState.range.timeTo) {
+    return `${jrState.range.timeFrom}–${jrState.range.timeTo}`;
+  }
+  const list = (bands || []).filter(band => Number.isFinite(Number(band.from)) && Number.isFinite(Number(band.to)));
+  if (!list.length) return 'the selected period';
+  const from = Math.min(...list.map(band => Number(band.from)));
+  const to = Math.max(...list.map(band => Number(band.to)));
+  return `${jrClockLabel(from)}–${jrClockLabel(to)}`;
+}
+
+function jrAllMetrics() {
+  if (jrState.period === 'saved') {
+    const slices = jrSavedForCurrent()
+      .filter(day => jrState.picked.has(jrDayKey(day)))
+      .map(day => (day.counts && day.counts.all) || { weekdays: [], hours: [], tickets: 0 });
+    return jrSumSlices(slices);
+  }
+  if (typeof jiraSearch === 'undefined') return { weekdays: [], hours: [], bands: [] };
+  return jiraSearch.metricsForRows(jrState.issues, jrCurrentUser(), 'all', jrState.range);
+}
+
+function jrNightOverlap(bands) {
+  return (bands || []).some(band => Number(band.to) > 18 * 60 && Number(band.from) < 24 * 60);
+}
+
+function jrLeadSentences() {
+  const metrics = jrAllMetrics();
+  const dates = jrPeriodDates();
+  const night = jrNightOverlap(metrics.bands);
+  const subs = JR_SLIDE.map(item => {
+    const stats = jrStatsFor(item.sub);
+    return {
+      label: item.code,
+      tickets: stats.todo + stats.clarification,
+      priority: night ? jrPriorityCount(item.sub, dates) : 0
+    };
+  });
+  const subsidiary = jrTied(subs.map(row => ({ label: row.label, value: row.tickets })));
+  const band = jrTied((metrics.bands || []).map((item, index) => ({
+    label: item.label,
+    value: (metrics.hours || [])[index] || 0
+  })));
+  const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const weekday = jrTied(weekdays.map((label, index) => ({
+    label,
+    value: (metrics.weekdays || [])[index] || 0
+  })));
+  const priority = jrTied(subs.map(row => ({ label: row.label, value: row.priority })));
+  const range = jrRangeLabel(metrics.bands);
+  return `<div class="mt-3">
+    <p class="mb-1">The subsidiary with the most tickets in the period ${jrEsc(range)} was ${jrEsc(subsidiary.names)} with ${subsidiary.value}.</p>
+    <p class="mb-1">The period with the most tickets is ${jrEsc(band.names)} with ${band.value}.</p>
+    <p class="mb-1">The weekday with the most tickets was ${jrEsc(weekday.names)}.</p>
+    <p class="mb-0">The subsidiary with the most priority requests in the night period (tickets from 18:00 onward) was ${jrEsc(priority.names)} with ${priority.value}.</p>
   </div>`;
 }
 
