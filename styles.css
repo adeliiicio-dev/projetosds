@@ -467,6 +467,7 @@ h1 {
 .jr-days { display: flex; flex-wrap: wrap; gap: 8px 14px; }
 .jr-extra { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .jr-moves { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; }
+.jr-save-day { max-width: 16rem; width: auto; }
 .table-wrap td.jr-summary, .table-wrap td.jr-move { white-space: pre-line; max-width: 420px; }
 .jr-key { color: #9db4ff; font-weight: 700; text-decoration: none; }
 .jr-payload {

@@ -40,7 +40,12 @@ const jrState = {
   info: null,
   transition: 'all',
   loading: false,
-  error: ''
+  error: '',
+  savedDays: [],
+  period: 'current',
+  picked: new Set(),
+  saveNote: '',
+  saving: false
 };
 
 function jrEsc(value) {
@@ -134,9 +139,43 @@ function jrRenderDays() {
   )).join('');
 }
 
-function jrPeak(items) {
-  const max = Math.max(0, ...items.map(item => item.value));
-  return items.map(item => ({ ...item, win: max > 0 && item.value === max }));
+function jrDayKey(day) {
+  return `${day.date}|${encodeURIComponent(String(day.user || '').trim().toLowerCase())}`;
+}
+
+function jrWeekdayLabel(date) {
+  const [year, month, day] = date.split('-').map(Number);
+  const index = (new Date(Date.UTC(year, month - 1, day)).getUTCDay() + 6) % 7;
+  return JR_DAY_SHORT[index] || '';
+}
+
+function jrRowsOnDate(rows, date) {
+  if (typeof jiraSearch === 'undefined') return [];
+  return (rows || []).map(row => {
+    const changes = ((row.payload && row.payload.statusChanges) || []).filter(change => {
+      const parts = jiraSearch.zonedParts(change.at);
+      return parts && parts.date === date;
+    });
+    if (!changes.length) return null;
+    return { ...row, payload: { ...(row.payload || {}), statusChanges: changes } };
+  }).filter(Boolean);
+}
+
+function jrSlice(rows) {
+  const metrics = jiraSearch.metricsForRows(rows);
+  return { weekdays: metrics.weekdays.slice(), hours: metrics.hours.slice(), tickets: metrics.tickets };
+}
+
+function jrSumSlices(list) {
+  const weekdays = [0, 0, 0, 0, 0, 0, 0];
+  const hours = [0, 0, 0, 0];
+  let tickets = 0;
+  list.forEach(slice => {
+    (slice.weekdays || []).forEach((count, index) => { weekdays[index] += count; });
+    (slice.hours || []).forEach((count, index) => { hours[index] += count; });
+    tickets += slice.tickets || 0;
+  });
+  return { weekdays, hours, tickets };
 }
 
 function jrCountTable(caption, items) {
@@ -149,33 +188,66 @@ function jrCountTable(caption, items) {
   </table></div>`;
 }
 
+function jrChosenSaved() {
+  return jrState.savedDays.filter(day => jrState.picked.has(jrDayKey(day)));
+}
+
 function jrRenderMetrics() {
   const host = document.getElementById('jrMetrics');
   if (!host) return;
-  if (jrState.loading || jrState.error || !jrState.info || typeof jiraSearch === 'undefined') {
+  if (jrState.loading || typeof jiraSearch === 'undefined') {
     host.innerHTML = '';
     return;
   }
-  const visible = jrFilter(jrState.issues, jrState.transition);
-  const metrics = jiraSearch.metricsForRows(visible);
+  const hasCurrent = !!(jrState.info && !jrState.error);
+  if (!hasCurrent && !jrState.savedDays.length) {
+    host.innerHTML = '';
+    return;
+  }
+  const queried = hasCurrent && Array.isArray(jrState.info.queried) ? jrState.info.queried : [];
+  let metrics;
+  let source;
+  if (jrState.period === 'saved') {
+    const chosen = jrChosenSaved();
+    const slices = chosen.map(day => (day.counts && day.counts[jrState.transition]) || (day.counts && day.counts.all) || { weekdays: [], hours: [], tickets: 0 });
+    metrics = jrSumSlices(slices);
+    source = chosen.length
+      ? 'Números lidos do arquivo, sem nova consulta ao Jira.'
+      : 'Escolha ao menos um dia salvo.';
+  } else {
+    metrics = jiraSearch.metricsForRows(jrFilter(jrState.issues, jrState.transition));
+    source = 'Números da consulta atual, entre 18h e 22h.';
+  }
   const days = JR_DAY_SHORT.map((label, index) => ({ label, value: metrics.weekdays[index] || 0 }));
   const hours = JR_SLOTS.map((slot, index) => ({ label: slot.label, value: metrics.hours[index] || 0 }));
-  const dayChart = typeof rpBars === 'function' ? rpBars(jrPeak(days)) : '';
-  const hourChart = typeof rpBars === 'function' ? rpBars(jrPeak(hours)) : '';
   const noun = metrics.tickets === 1 ? 'ticket' : 'tickets';
+  const savedBoxes = jrState.savedDays.map(day => {
+    const key = jrDayKey(day);
+    const checked = jrState.picked.has(key) ? ' checked' : '';
+    const label = `${jrFmt(day.date)} ${jrWeekdayLabel(day.date)} · ${day.user}`;
+    return `<label class="rp-check"><input type="checkbox" data-jr-picked="${jrEsc(key)}"${checked}${jrState.period === 'saved' ? '' : ' disabled'}> ${jrEsc(label)}</label>`;
+  }).join('');
+  const saveOptions = queried.map(date => `<option value="${jrEsc(date)}">${jrEsc(`${jrFmt(date)} ${jrWeekdayLabel(date)}`)}</option>`).join('');
+  const saveRow = queried.length ? `<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+      <select id="jrSaveDay" class="form-select form-select-sm jr-save-day" aria-label="Dia para salvar">${saveOptions}</select>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="jrSave"${jrState.saving ? ' disabled' : ''}>Salvar este dia</button>
+      <span class="muted">${jrEsc(jrState.saveNote)}</span>
+    </div>` : (jrState.saveNote ? `<p class="muted mb-3">${jrEsc(jrState.saveNote)}</p>` : '');
   host.innerHTML = `<div class="section-card">
     <div class="section-title">
       <i class="bi bi-bar-chart text-accent fs-4"></i>
       <h4 class="m-0">Métricas</h4>
     </div>
-    <p class="muted mb-3">${metrics.tickets} ${noun} deste resultado mudaram de status entre 18h e 22h, no horário de Brasília. Um ticket entra em cada dia e em cada hora em que isso aconteceu.</p>
+    <div class="jr-days mb-2">
+      <label class="rp-check"><input type="radio" name="jrPeriod" value="current"${jrState.period === 'current' ? ' checked' : ''}${hasCurrent ? '' : ' disabled'}> Consulta atual</label>
+      <label class="rp-check"><input type="radio" name="jrPeriod" value="saved"${jrState.period === 'saved' ? ' checked' : ''}${jrState.savedDays.length ? '' : ' disabled'}> Dias salvos</label>
+    </div>
+    <div class="jr-days mb-3">${savedBoxes}</div>
+    ${saveRow}
+    <p class="muted mb-3">${metrics.tickets} ${noun} entre 18h e 22h, no horário de Brasília. ${jrEsc(source)} Um ticket entra em cada dia e em cada hora em que mudou de status.</p>
     <div class="rp-pair">
       <div class="rp-pane">${jrCountTable('Dia', days)}</div>
-      <div class="rp-pane"><div class="rp-chart-wrap rp-chart-left">${dayChart}</div></div>
-    </div>
-    <div class="rp-pair rp-week-extra">
       <div class="rp-pane">${jrCountTable('Hora', hours)}</div>
-      <div class="rp-pane"><div class="rp-chart-wrap rp-chart-left">${hourChart}</div></div>
     </div>
   </div>`;
 }
@@ -235,6 +307,10 @@ function jrRenderResults() {
 
   const notes = [];
   if (jrState.info.truncated) notes.push('A busca atingiu o limite e pode haver mais tickets.');
+  if (Array.isArray(jrState.info.saved) && jrState.info.saved.length) {
+    const savedLabel = jrState.info.saved.map(day => jrFmt(day.date)).join(', ');
+    notes.push(`Já salvo, sem nova consulta ao Jira: ${savedLabel}.`);
+  }
   const visible = jrFilter(jrState.issues, jrState.transition);
   const noun = visible.length === 1 ? 'ticket' : 'tickets';
   meta.innerHTML = `<p class="muted mb-2">${visible.length} ${noun} neste filtro.</p>${notes.map(note => `<p class="muted mb-2">${jrEsc(note)}</p>`).join('')}`;
@@ -304,6 +380,8 @@ async function jrConsult(event) {
     jrState.info = data;
     jrState.issues = Array.isArray(data.issues) ? data.issues : [];
     jrState.error = '';
+    jrState.period = 'current';
+    jrMergeSaved(Array.isArray(data.saved) ? data.saved : []);
   } catch (err) {
     jrState.info = null;
     jrState.issues = [];
@@ -320,6 +398,70 @@ async function jrConsult(event) {
   }
 }
 
+function jrMergeSaved(days) {
+  days.forEach(day => {
+    const key = jrDayKey(day);
+    jrState.savedDays = jrState.savedDays.filter(item => jrDayKey(item) !== key);
+    jrState.savedDays.push(day);
+    jrState.picked.add(key);
+  });
+  jrState.savedDays.sort((a, b) => a.date.localeCompare(b.date) || String(a.user).localeCompare(String(b.user), 'pt'));
+}
+
+async function jrLoadSaved() {
+  try {
+    const response = await fetch('/api/jira/metrics', { headers: { Accept: 'application/json' } });
+    const data = await response.json();
+    const days = data && Array.isArray(data.days) ? data.days : [];
+    jrState.savedDays = days;
+    days.forEach(day => jrState.picked.add(jrDayKey(day)));
+    if (!jrState.info && days.length) jrState.period = 'saved';
+  } catch {
+    /* a lista salva fica vazia se o servidor local não responder */
+  }
+  jrRenderResults();
+}
+
+async function jrSaveSelected() {
+  if (jrState.saving || !jrState.info) return;
+  const select = document.getElementById('jrSaveDay');
+  const date = select ? select.value : '';
+  const user = document.getElementById('jrUser').value.trim();
+  if (!date || !user) {
+    jrState.saveNote = 'Escolha o dia da consulta atual.';
+    jrRenderResults();
+    return;
+  }
+  const dated = jrRowsOnDate(jrState.issues, date);
+  jrState.saving = true;
+  jrState.saveNote = '';
+  jrRenderResults();
+  try {
+    const response = await fetch('/api/jira/metrics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        date,
+        user,
+        counts: {
+          all: jrSlice(dated),
+          todo: jrSlice(jrFilter(dated, 'todo')),
+          clarification: jrSlice(jrFilter(dated, 'clarification'))
+        }
+      })
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data && data.error || 'Não foi possível salvar o dia.');
+    if (data && data.day) jrMergeSaved([data.day]);
+    jrState.saveNote = `${jrFmt(date)} salvo.`;
+  } catch (err) {
+    jrState.saveNote = err.message || 'Não foi possível salvar o dia.';
+  } finally {
+    jrState.saving = false;
+    jrRenderResults();
+  }
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
     const screen = document.getElementById('rpGuideV2');
@@ -332,6 +474,7 @@ if (typeof document !== 'undefined') {
     jrRenderSlots();
     jrRenderDays();
     jrRenderResults();
+    jrLoadSaved();
 
     document.getElementById('rpGuides').addEventListener('click', event => {
       const btn = event.target.closest('[data-rp-guide]');
@@ -375,5 +518,23 @@ if (typeof document !== 'undefined') {
     };
     document.getElementById('jrMoves').addEventListener('change', applyMove);
     document.getElementById('jrMoves').addEventListener('click', applyMove);
+    const metrics = document.getElementById('jrMetrics');
+    metrics.addEventListener('change', event => {
+      const period = event.target.closest('input[name="jrPeriod"]');
+      if (period) {
+        jrState.period = period.value === 'saved' ? 'saved' : 'current';
+        jrRenderResults();
+        return;
+      }
+      const picked = event.target.closest('[data-jr-picked]');
+      if (!picked) return;
+      if (picked.checked) jrState.picked.add(picked.dataset.jrPicked);
+      else jrState.picked.delete(picked.dataset.jrPicked);
+      jrRenderResults();
+    });
+    metrics.addEventListener('click', event => {
+      const button = event.target.closest('#jrSave');
+      if (button) jrSaveSelected();
+    });
   });
 }

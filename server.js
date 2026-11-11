@@ -192,15 +192,172 @@ async function loadChangelog(config, key, fetchImpl) {
   return [];
 }
 
-async function runSearch(input, fetchImpl = global.fetch) {
+const METRICS_FILE = path.join(ROOT, 'data', 'report-v2-metrics.json');
+
+function foldName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function metricsPath(filePath) {
+  return filePath || METRICS_FILE;
+}
+
+function wholeCount(value) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 100000) return null;
+  return value;
+}
+
+function countList(value, size) {
+  if (!Array.isArray(value) || value.length !== size) return null;
+  const out = [];
+  for (const item of value) {
+    const count = wholeCount(item);
+    if (count == null) return null;
+    out.push(count);
+  }
+  return out;
+}
+
+function countSlice(value) {
+  if (!value || typeof value !== 'object') return null;
+  const weekdays = countList(value.weekdays, 7);
+  const hours = countList(value.hours, 4);
+  const tickets = wholeCount(value.tickets);
+  if (!weekdays || !hours || tickets == null) return null;
+  return { weekdays, hours, tickets };
+}
+
+function cleanSavedDay(input) {
+  const date = String(input && input.date || '');
+  const user = String(input && input.user || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  if (!user || user.length > 80 || /[\u0000-\u001f]/.test(user)) return null;
+  const counts = input && input.counts;
+  const all = countSlice(counts && counts.all);
+  const todo = countSlice(counts && counts.todo);
+  const clarification = countSlice(counts && counts.clarification);
+  if (!all || !todo || !clarification) return null;
+  const savedAt = typeof input.savedAt === 'string' && input.savedAt.length <= 40 ? input.savedAt : '';
+  return { date, user, savedAt, counts: { all, todo, clarification } };
+}
+
+function readMetrics(filePath) {
+  const file = metricsPath(filePath);
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { days: [] };
+    const error = new Error('Não foi possível ler as métricas salvas.');
+    error.status = 500;
+    throw error;
+  }
+  let parsed;
+  try { parsed = JSON.parse(text); } catch {
+    const error = new Error('O arquivo de métricas está ilegível.');
+    error.status = 500;
+    throw error;
+  }
+  const token = String(process.env.BEARER_TOKEN || '');
+  const days = Array.isArray(parsed && parsed.days) ? parsed.days.map(cleanSavedDay).filter(day => {
+    if (!day) return false;
+    return !(token.length >= 4 && JSON.stringify(day).includes(token));
+  }) : [];
+  days.sort((a, b) => a.date.localeCompare(b.date) || a.user.localeCompare(b.user, 'pt'));
+  return { days };
+}
+
+function publicDay(day) {
+  return {
+    date: day.date,
+    user: day.user,
+    savedAt: day.savedAt,
+    counts: day.counts
+  };
+}
+
+function writeMetrics(filePath, days) {
+  const file = metricsPath(filePath);
+  const token = String(process.env.BEARER_TOKEN || '');
+  const body = JSON.stringify({ days }, null, 2);
+  if (token.length >= 4 && body.includes(token)) {
+    const err = new Error('O arquivo de métricas não pode guardar o token.');
+    err.status = 400;
+    throw err;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, body);
+  fs.renameSync(tmp, file);
+}
+
+function saveMetricsDay(input, filePath) {
+  const clean = cleanSavedDay(input);
+  if (!clean) {
+    const err = new Error('Dia de métricas inválido.');
+    err.status = 400;
+    throw err;
+  }
+  const token = String(process.env.BEARER_TOKEN || '');
+  if (token.length >= 4 && clean.user.includes(token)) {
+    const err = new Error('O arquivo de métricas não pode guardar o token.');
+    err.status = 400;
+    throw err;
+  }
+  const store = readMetrics(filePath);
+  const savedAt = new Date().toISOString();
+  const next = { ...clean, savedAt };
+  const key = foldName(clean.user);
+  const days = store.days.filter(day => !(day.date === clean.date && foldName(day.user) === key));
+  days.push(next);
+  days.sort((a, b) => a.date.localeCompare(b.date) || a.user.localeCompare(b.user, 'pt'));
+  writeMetrics(filePath, days);
+  return publicDay(next);
+}
+
+function savedForSearch(filters, filePath) {
+  const store = readMetrics(filePath);
+  const key = foldName(filters.user);
+  const saved = [];
+  const pending = [];
+  filters.days.forEach(day => {
+    const found = store.days.find(item => item.date === day && foldName(item.user) === key);
+    if (found) saved.push(publicDay(found));
+    else pending.push(day);
+  });
+  return { saved, pending };
+}
+
+async function runSearch(input, fetchImpl = global.fetch, filePath = METRICS_FILE) {
   const filters = jira.assertSearchInput(input);
+  const split = savedForSearch(filters, filePath);
+  if (!split.pending.length) {
+    return {
+      jql: '',
+      total: 0,
+      fetched: 0,
+      matched: 0,
+      dropped: 0,
+      truncated: false,
+      changelog: true,
+      issues: [],
+      saved: split.saved,
+      queried: []
+    };
+  }
+  const pendingFilters = { ...filters, days: split.pending };
   const config = jiraConfig();
-  const jql = jira.buildSearchJql(filters);
+  const jql = jira.buildSearchJql(pendingFilters);
   const collected = await jira.collectIssues(body => jiraPost(config, body, fetchImpl), jql, jira.JIRA_FIELDS);
   for (const issue of collected.issues) {
     issue.changelog = { histories: await loadChangelog(config, issue.key, fetchImpl) };
   }
-  const built = jira.buildRows(collected.issues, filters);
+  const built = jira.buildRows(collected.issues, pendingFilters);
   return {
     jql,
     total: built.rows.length,
@@ -209,7 +366,9 @@ async function runSearch(input, fetchImpl = global.fetch) {
     dropped: 0,
     truncated: collected.truncated,
     changelog: true,
-    issues: built.rows.map(row => ({ ...row, url: browseUrl(config.baseUrl, row.key) }))
+    issues: built.rows.map(row => ({ ...row, url: browseUrl(config.baseUrl, row.key) })),
+    saved: split.saved,
+    queried: split.pending
   };
 }
 
@@ -294,8 +453,26 @@ async function handleRequest(req, res, options) {
       sendJson(res, 400, { error: 'JSON inválido.' });
       return;
     }
-    const result = await runSearch(body, options.fetchImpl || global.fetch);
+    const result = await runSearch(body, options.fetchImpl || global.fetch, options.metricsPath);
     sendJson(res, 200, result);
+    return;
+  }
+  if (url.pathname === '/api/jira/metrics') {
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      sendJson(res, 200, { days: readMetrics(options.metricsPath).days.map(publicDay) });
+      return;
+    }
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Use GET ou POST.' });
+      return;
+    }
+    const raw = await readBody(req);
+    let body;
+    try { body = JSON.parse(raw || '{}'); } catch {
+      sendJson(res, 400, { error: 'JSON inválido.' });
+      return;
+    }
+    sendJson(res, 200, { day: saveMetricsDay(body, options.metricsPath) });
     return;
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') {

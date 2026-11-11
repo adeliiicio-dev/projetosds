@@ -1,9 +1,11 @@
 const assert = require('assert');
 const fs = require('fs');
 const http = require('http');
+const os = require('os');
 const path = require('path');
 const jira = require('./jira-search');
 const server = require('./server');
+const EMPTY_METRICS = path.join(os.tmpdir(), `sds-metrics-empty-${process.pid}.json`);
 
 const FILTERS = { user: 'Ada', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] };
 
@@ -252,7 +254,7 @@ async function testHttp() {
       text: async () => JSON.stringify({ total: 1, issues: [bare] })
     };
   };
-  const { app, port } = await listen(server.createHandler({ fetchImpl }));
+  const { app, port } = await listen(server.createHandler({ fetchImpl, metricsPath: EMPTY_METRICS }));
   try {
     const missing = await requestOnce(port, 'POST', '/api/jira/search', JSON.stringify({ user: '', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] }));
     assert.equal(missing.status, 400);
@@ -285,7 +287,7 @@ async function testHttp() {
       status: 401,
       text: async () => JSON.stringify({ errorMessages: [`bad ${token}`] })
     });
-    const deniedApp = await listen(server.createHandler({ fetchImpl: deniedFetch }));
+    const deniedApp = await listen(server.createHandler({ fetchImpl: deniedFetch, metricsPath: EMPTY_METRICS }));
     try {
       const denied = await requestOnce(deniedApp.port, 'POST', '/api/jira/search', JSON.stringify(FILTERS));
       assert.equal(denied.status, 401);
@@ -338,7 +340,7 @@ async function testHttp() {
       return { ok: true, status: 200, text: async () => JSON.stringify({ total: 5, issues: mismatch }) };
     };
     process.env.BEARER_TOKEN = token;
-    const mismatchApp = await listen(server.createHandler({ fetchImpl: mismatchFetch }));
+    const mismatchApp = await listen(server.createHandler({ fetchImpl: mismatchFetch, metricsPath: EMPTY_METRICS }));
     try {
       const empty = await requestOnce(mismatchApp.port, 'POST', '/api/jira/search', JSON.stringify(FILTERS));
       assert.equal(empty.status, 200);
@@ -357,7 +359,7 @@ async function testHttp() {
       status: 400,
       text: async () => JSON.stringify({ message: `The number of change history items requested exceeds the limit ${token}` })
     });
-    const badApp = await listen(server.createHandler({ fetchImpl: badFetch }));
+    const badApp = await listen(server.createHandler({ fetchImpl: badFetch, metricsPath: EMPTY_METRICS }));
     try {
       const bad = await requestOnce(badApp.port, 'POST', '/api/jira/search', JSON.stringify(FILTERS));
       assert.equal(bad.status, 400);
@@ -373,7 +375,7 @@ async function testHttp() {
       status: 400,
       text: async () => 'not-json: error in the JQL query'
     });
-    const rawApp = await listen(server.createHandler({ fetchImpl: rawFetch }));
+    const rawApp = await listen(server.createHandler({ fetchImpl: rawFetch, metricsPath: EMPTY_METRICS }));
     try {
       const raw = await requestOnce(rawApp.port, 'POST', '/api/jira/search', JSON.stringify(FILTERS));
       assert.equal(raw.status, 400);
@@ -390,12 +392,84 @@ async function testHttp() {
   }
 }
 
+async function testSavedDays() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sds-metrics-'));
+  const metricsPath = path.join(dir, 'report-v2-metrics.json');
+  const savedEnv = { JIRA_URL: process.env.JIRA_URL, BEARER_TOKEN: process.env.BEARER_TOKEN };
+  const token = 'local-test-token';
+  process.env.JIRA_URL = 'http://jira.example/jira';
+  process.env.BEARER_TOKEN = token;
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ method: options.method, body: options.body || '' });
+    return { ok: true, status: 200, text: async () => JSON.stringify({ total: 0, issues: [] }) };
+  };
+  const counts = {
+    all: { weekdays: [0, 5, 0, 0, 0, 0, 0], hours: [5, 0, 0, 0], tickets: 5 },
+    todo: { weekdays: [0, 4, 0, 0, 0, 0, 0], hours: [4, 0, 0, 0], tickets: 4 },
+    clarification: { weekdays: [0, 1, 0, 0, 0, 0, 0], hours: [1, 0, 0, 0], tickets: 1 }
+  };
+  const { app, port } = await listen(server.createHandler({ fetchImpl, metricsPath }));
+  try {
+    const save = await requestOnce(port, 'POST', '/api/jira/metrics', JSON.stringify({
+      date: '2026-11-10', user: 'Ada', counts, bearer: token
+    }));
+    assert.equal(save.status, 200);
+    const file = fs.readFileSync(metricsPath, 'utf8');
+    assert.equal(file.includes(token), false);
+    assert.equal(file.includes('bearer'), false);
+    const listed = JSON.parse((await requestOnce(port, 'GET', '/api/jira/metrics')).body);
+    assert.equal(listed.days.length, 1);
+    assert.equal(listed.days[0].date, '2026-11-10');
+    assert.equal(listed.days[0].counts.all.tickets, 5);
+    assert.equal(listed.days[0].user, 'Ada');
+
+    const mixed = JSON.parse((await requestOnce(port, 'POST', '/api/jira/search', JSON.stringify({
+      user: 'Ada', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10', '2026-11-11']
+    }))).body);
+    assert.deepEqual(mixed.queried, ['2026-11-11']);
+    assert.equal(mixed.saved[0].date, '2026-11-10');
+    assert.equal(calls.length, 1);
+    assert.equal(JSON.parse(calls[0].body).jql.includes('2026/11/10'), false);
+    assert.equal(JSON.parse(calls[0].body).jql.includes('2026/11/11'), true);
+
+    const again = JSON.parse((await requestOnce(port, 'POST', '/api/jira/search', JSON.stringify({
+      user: 'ada', timeFrom: '18:00', timeTo: '22:00', days: ['2026-11-10']
+    }))).body);
+    assert.deepEqual(again.queried, []);
+    assert.equal(again.issues.length, 0);
+    assert.equal(calls.length, 1);
+
+    const other = JSON.parse((await requestOnce(port, 'POST', '/api/jira/search', JSON.stringify({
+      user: 'Bruno', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10']
+    }))).body);
+    assert.deepEqual(other.queried, ['2026-11-10']);
+    assert.equal(calls.length, 2);
+    assert.equal(JSON.parse(calls[1].body).jql.includes('2026/11/10'), true);
+
+    const bad = await requestOnce(port, 'POST', '/api/jira/metrics', JSON.stringify({ date: 'ontem', user: 'Ada', counts }));
+    assert.equal(bad.status, 400);
+    const hidden = await requestOnce(port, 'GET', '/data/report-v2-metrics.json');
+    assert.equal(hidden.status, 404);
+  } finally {
+    await new Promise(resolve => app.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+    ['JIRA_URL', 'BEARER_TOKEN'].forEach(key => {
+      if (savedEnv[key] == null) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    });
+  }
+}
+
 function testSources() {
   const files = ['server.js', 'jira-search.js', 'jira-ui.js', 'index.html'];
   const src = files.map(file => fs.readFileSync(path.join(__dirname, file), 'utf8')).join('\n');
   assert.match(src, /\/rest\/api\/2\/issue\//);
   assert.match(src, /searchParams\.set\('expand', 'changelog'\)/);
   assert.equal(/\/rest\/api\/2\/issue\/[^'"`\s]*\/changelog/.test(src), false);
+  const ui = fs.readFileSync(path.join(__dirname, 'jira-ui.js'), 'utf8');
+  assert.equal(ui.includes('rpBars'), false);
+  assert.equal(ui.includes('rp-chart'), false);
   assert.equal(src.includes('foram alterados'), false);
   assert.equal(src.includes('O Jira devolveu'), false);
   assert.equal(/\btransitions\b/.test(src), false);
@@ -417,6 +491,7 @@ async function main() {
   await testWindowsAndMoves();
   await testPaging();
   await testHttp();
+  await testSavedDays();
   testSources();
   console.log('jira search tests ok');
 }
