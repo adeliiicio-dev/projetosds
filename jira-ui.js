@@ -12,6 +12,27 @@ const JR_DAY_SHORT = (typeof RP_DAYS !== 'undefined' ? RP_DAYS : [
   { short: 'Sex' }, { short: 'Sáb' }, { short: 'Dom' }
 ]).map(day => day.short);
 
+const JR_USER_KEY = 'sds-report-v2-user';
+
+function jrLoadUser() {
+  try {
+    if (typeof localStorage === 'undefined') return '';
+    const name = localStorage.getItem(JR_USER_KEY);
+    return typeof name === 'string' ? name : '';
+  } catch {
+    return '';
+  }
+}
+
+function jrSaveUser(name) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(JR_USER_KEY, name);
+  } catch {
+    /* a busca segue com o nome que está no campo */
+  }
+}
+
 const jrState = {
   weekStart: '',
   days: new Set(),
@@ -223,6 +244,7 @@ async function jrConsult(event) {
     jrRenderResults();
     return;
   }
+  jrSaveUser(user);
   jrState.loading = true;
   jrState.error = '';
   jrRenderResults();
@@ -262,6 +284,8 @@ if (typeof document !== 'undefined') {
     const today = jrToday();
     jrState.weekStart = jrMonday(today);
     jrState.days = new Set([today]);
+    const savedUser = jrLoadUser();
+    if (savedUser) document.getElementById('jrUser').value = savedUser;
     jrRenderSlots();
     jrRenderDays();
     jrRenderResults();
