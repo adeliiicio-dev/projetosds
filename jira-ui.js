@@ -202,7 +202,7 @@ function jrCountTable(caption, items) {
   const body = items.map(item => `<tr><th>${jrEsc(item.label)}</th><td class="num">${item.value}</td></tr>`).join('');
   const total = items.reduce((sum, item) => sum + item.value, 0);
   return `<div class="table-wrap rp-fit"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
-    <thead><tr><th>${jrEsc(caption)}</th><th>Tickets</th></tr></thead>
+    <thead><tr><th>${jrEsc(caption)}</th><th>Mudanças</th></tr></thead>
     <tbody>${body}</tbody>
     <tfoot><tr><th>Total</th><th class="num">${total}</th></tr></tfoot>
   </table></div>`;
@@ -226,18 +226,18 @@ function jrRenderMetrics() {
   const ownSaved = jrSavedForCurrent();
   if (jrState.period === 'saved') {
     const chosen = ownSaved.filter(day => jrState.picked.has(jrDayKey(day)));
-    const slices = chosen.map(day => (day.counts && day.counts[jrState.transition]) || (day.counts && day.counts.all) || { weekdays: [], hours: [], tickets: 0 });
+    const slices = chosen.map(day => (day.counts && day.counts.all) || { weekdays: [], hours: [], tickets: 0 });
     metrics = jrSumSlices(slices);
     source = chosen.length
       ? 'Números lidos do arquivo, só das mudanças dessa pessoa, sem nova consulta ao Jira.'
       : 'Escolha ao menos um dia salvo dessa pessoa.';
   } else {
-    metrics = jiraSearch.metricsForRows(jrFilter(jrState.issues, jrState.transition), jrCurrentUser());
-    source = 'Números da consulta atual, só das mudanças dessa pessoa, entre 18h e 22h.';
+    metrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser());
+    source = 'Números da consulta atual, só das mudanças dessa pessoa, entre 18h e 22h. 22h fica de fora.';
   }
   const days = JR_DAY_SHORT.map((label, index) => ({ label, value: metrics.weekdays[index] || 0 }));
   const hours = JR_SLOTS.map((slot, index) => ({ label: slot.label, value: metrics.hours[index] || 0 }));
-  const noun = metrics.tickets === 1 ? 'ticket' : 'tickets';
+  const noun = metrics.tickets === 1 ? 'mudança' : 'mudanças';
   const savedBoxes = ownSaved.map(day => {
     const key = jrDayKey(day);
     const checked = jrState.picked.has(key) ? ' checked' : '';
@@ -261,12 +261,20 @@ function jrRenderMetrics() {
     </div>
     <div class="jr-days mb-3">${savedBoxes}</div>
     ${saveRow}
-    <p class="muted mb-3">${metrics.tickets} ${noun} entre 18h e 22h, no horário de Brasília. ${jrEsc(source)} Um ticket entra em cada dia e em cada hora em que mudou de status.</p>
+    <p class="muted mb-3">${metrics.tickets} ${noun} dele entre 18h e 22h, no horário de Brasília. ${jrEsc(source)} Cada mudança entra em um dia e em uma hora.</p>
     <div class="rp-pair">
       <div class="rp-pane">${jrCountTable('Dia', days)}</div>
       <div class="rp-pane">${jrCountTable('Hora', hours)}</div>
     </div>
   </div>`;
+}
+
+function jrMoveText(row, transition) {
+  const changes = (row.payload && row.payload.statusChanges) || [];
+  const kept = transition === 'todo' || transition === 'clarification'
+    ? changes.filter(change => change.kind === transition)
+    : changes;
+  return kept.map(change => change.text || `${change.from || '—'} → ${change.to || '—'}`).join('\n');
 }
 
 function jrKeyCell(row) {
@@ -288,11 +296,9 @@ function jrRenderResults() {
     ? '<i class="bi bi-hourglass-split"></i> Consultando…'
     : '<i class="bi bi-search"></i> Consultar';
 
-  const counts = {
-    all: jrState.issues.length,
-    todo: jrFilter(jrState.issues, 'todo').length,
-    clarification: jrFilter(jrState.issues, 'clarification').length
-  };
+  const counts = typeof jiraSearch !== 'undefined'
+    ? jiraSearch.countMoves(jrState.issues)
+    : { all: 0, todo: 0, clarification: 0, neither: 0 };
   const countAll = document.getElementById('jrCountAll');
   const countTodo = document.getElementById('jrCountTodo');
   const countClar = document.getElementById('jrCountClar');
@@ -330,6 +336,10 @@ function jrRenderResults() {
   }
   const visible = jrFilter(jrState.issues, jrState.transition);
   const noun = visible.length === 1 ? 'ticket' : 'tickets';
+  if (counts.neither > 0) {
+    const other = counts.neither === 1 ? '1 mudança dele' : `${counts.neither} mudanças dele`;
+    notes.push(`${other} não saíram de Request para To do nem para Clarification.`);
+  }
   meta.innerHTML = `<p class="muted mb-2">${visible.length} ${noun} neste filtro.</p>${notes.map(note => `<p class="muted mb-2">${jrEsc(note)}</p>`).join('')}`;
   table.innerHTML = visible.length ? `<div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
       <thead><tr><th>Key</th><th>Summary</th><th>Status</th><th>Assignee</th><th>Movimento</th></tr></thead>
@@ -338,7 +348,7 @@ function jrRenderResults() {
         <td class="jr-summary" title="${jrEsc(row.summary)}">${jrEsc(row.summary || '—')}</td>
         <td>${jrEsc(row.status || '—')}</td>
         <td>${jrEsc(row.assignee || '—')}</td>
-        <td class="jr-move">${jrEsc(row.moveText || '—')}</td>
+        <td class="jr-move">${jrEsc(jrMoveText(row, jrState.transition) || '—')}</td>
       </tr>`).join('')}</tbody>
     </table></div>` : '<p class="muted mb-0">Nenhum ticket para este filtro.</p>';
 

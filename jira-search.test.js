@@ -173,9 +173,58 @@ async function testWindowsAndMoves() {
     { key: 'LC-33', payload: { statusChanges: [{ from: 'Request', to: 'To do', at: '2026-11-10T22:00:00.000-0300' }] } },
     { key: 'LC-34', payload: { statusChanges: [{ from: 'Request', to: 'To do', at: '2026-11-10T15:20:00.000-0300' }] } }
   ]);
-  assert.deepEqual(metrics.weekdays, [0, 2, 1, 0, 0, 0, 0]);
-  assert.deepEqual(metrics.hours, [2, 0, 0, 1]);
-  assert.equal(metrics.tickets, 3);
+  assert.deepEqual(metrics.weekdays, [0, 3, 1, 0, 0, 0, 0]);
+  assert.deepEqual(metrics.hours, [3, 0, 0, 1]);
+  assert.equal(metrics.tickets, 4);
+  assert.equal(metrics.weekdays.reduce((sum, count) => sum + count, 0), metrics.hours.reduce((sum, count) => sum + count, 0));
+
+  const both = jira.buildRows([
+    issue('LC-40', {
+      summary: 'Dois tipos',
+      updated: '2026-11-10T18:40:00.000-0300',
+      histories: [
+        {
+          created: '2026-11-10T18:10:00.000-0300',
+          author: { displayName: 'Adelino Souza' },
+          items: [{ field: 'status', fromString: 'Request', toString: 'To do' }]
+        },
+        {
+          created: '2026-11-10T18:40:00.000-0300',
+          author: { displayName: 'Adelino Souza' },
+          items: [{ field: 'status', fromString: 'Request', toString: 'Clarification' }]
+        },
+        {
+          created: '2026-11-10T18:50:00.000-0300',
+          author: { displayName: 'Bruno Souza', emailAddress: 'ade.costa@example.com' },
+          items: [{ field: 'status', fromString: 'Request', toString: 'Done' }]
+        }
+      ]
+    }),
+    issue('LC-41', { from: 'Request', to: 'Done', at: '2026-11-10T18:20:00.000-0300', author: 'Adelino Souza', summary: 'Outro destino' })
+  ], { user: 'Adelino Souza', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
+  assert.deepEqual(both.rows.map(row => row.key), ['LC-40', 'LC-41']);
+  assert.equal(both.rows[0].moveText.includes('Done'), false);
+  assert.equal(both.rows[0].moveText.includes('Bruno'), false);
+  const moveCounts = jira.countMoves(both.rows);
+  assert.equal(moveCounts.all, 3);
+  assert.equal(moveCounts.todo, 1);
+  assert.equal(moveCounts.clarification, 1);
+  assert.equal(moveCounts.neither, 1);
+  assert.equal(moveCounts.todo + moveCounts.clarification + moveCounts.neither, moveCounts.all);
+
+  const split = jira.metricsForRows([{
+    key: 'LC-40',
+    payload: {
+      statusChanges: [
+        { from: 'Request', to: 'To do', at: '2026-11-10T18:10:00.000-0300', author: 'Adelino Souza', kind: 'todo' },
+        { from: 'Request', to: 'Clarification', at: '2026-11-10T21:10:00.000-0300', author: 'Adelino Souza', kind: 'clarification' },
+        { from: 'Request', to: 'Done', at: '2026-11-10T22:00:00.000-0300', author: 'Adelino Souza', kind: '' }
+      ]
+    }
+  }], 'Adelino Souza');
+  assert.deepEqual(split.hours, [1, 0, 0, 1]);
+  assert.equal(split.weekdays.reduce((sum, count) => sum + count, 0), 2);
+  assert.equal(split.hours.reduce((sum, count) => sum + count, 0), 2);
 }
 
 async function testPaging() {

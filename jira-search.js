@@ -188,26 +188,29 @@ function inChosenWindow(iso, windows) {
   ));
 }
 
-function authorBlob(author) {
-  if (!author) return '';
-  if (typeof author === 'string') return author;
-  return ['displayName', 'name', 'key']
-    .map(key => author[key] || '')
-    .filter(Boolean)
-    .join(' ');
+function authorNames(author) {
+  if (!author) return [];
+  if (typeof author === 'string') return [author];
+  return ['displayName', 'name', 'key'].map(key => author[key]).filter(Boolean);
+}
+
+function nameTokens(value) {
+  return foldStatus(value).split(' ').filter(word => word.length >= 3);
+}
+
+function tokensCover(needles, hay) {
+  return needles.every(word => hay.some(part => part === word || part.startsWith(word)));
 }
 
 function authorMatches(user, author) {
-  const wanted = foldStatus(user);
-  const blob = foldStatus(authorBlob(author));
-  if (!wanted || !blob) return false;
-  if (samePerson(user, author)) return true;
-  const words = wanted.split(' ').filter(word => word.length >= 3);
-  const authorWords = blob.split(' ').filter(word => word.length >= 3);
-  if (!words.length || !authorWords.length) return false;
-  return words.some(word => authorWords.some(part => (
-    part === word || part.startsWith(word) || word.startsWith(part)
-  )));
+  const query = nameTokens(user);
+  const names = authorNames(author);
+  if (!query.length || !names.length) return false;
+  return names.some(name => {
+    const parts = nameTokens(name);
+    if (!parts.length) return false;
+    return tokensCover(query, parts) || tokensCover(parts, query);
+  });
 }
 
 function historyList(issue) {
@@ -237,7 +240,7 @@ function statusHistory(issue) {
       const rawFrom = statusText(item && item.fromString, item && item.from);
       const rawTo = statusText(item && item.toString, item && item.to);
       const field = String(item && item.field || '');
-      const parsed = `${rawFrom}\n${rawTo}\n${JSON.stringify(item || {})}`.match(ORIGINAL_NEW);
+      const parsed = `${rawFrom}\n${rawTo}`.match(ORIGINAL_NEW);
       const status = field.toLowerCase() === 'status' || !!parsed;
       if (!status) return;
       const ends = parsed
@@ -286,33 +289,38 @@ function weekdayIndex(date) {
 function metricsForRows(rows, user) {
   const weekdays = [0, 0, 0, 0, 0, 0, 0];
   const hours = [0, 0, 0, 0];
-  const seenDay = weekdays.map(() => new Set());
-  const seenHour = hours.map(() => new Set());
-  const seen = new Set();
   const wanted = foldStatus(user);
   (Array.isArray(rows) ? rows : []).forEach(row => {
     const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
-    const id = row && row.key ? row.key : '';
-    changes.forEach((change, index) => {
+    changes.forEach(change => {
       if (wanted && !authorMatches(user, change && change.author)) return;
       const parts = zonedParts(change && change.at);
       if (!parts || parts.minutes < 18 * 60 || parts.minutes >= 22 * 60) return;
       const day = weekdayIndex(parts.date);
       const hour = Math.floor(parts.minutes / 60) - 18;
       if (day < 0 || hour < 0 || hour > 3) return;
-      const token = id || `${parts.date}-${index}`;
-      if (!seenDay[day].has(token)) {
-        seenDay[day].add(token);
-        weekdays[day] += 1;
-      }
-      if (!seenHour[hour].has(token)) {
-        seenHour[hour].add(token);
-        hours[hour] += 1;
-      }
-      seen.add(token);
+      weekdays[day] += 1;
+      hours[hour] += 1;
     });
   });
-  return { weekdays, hours, tickets: seen.size };
+  const tickets = weekdays.reduce((sum, count) => sum + count, 0);
+  return { weekdays, hours, tickets };
+}
+
+function countMoves(rows) {
+  const moves = [];
+  (Array.isArray(rows) ? rows : []).forEach(row => {
+    const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
+    changes.forEach(change => moves.push(change));
+  });
+  const todo = moves.filter(move => move.kind === 'todo').length;
+  const clarification = moves.filter(move => move.kind === 'clarification').length;
+  return {
+    all: moves.length,
+    todo,
+    clarification,
+    neither: moves.length - todo - clarification
+  };
 }
 
 function toRow(issue, windows, user) {
@@ -346,7 +354,9 @@ function toRow(issue, windows, user) {
         from: move.from,
         to: move.to,
         at: move.at,
-        author: move.authorName
+        author: move.authorName,
+        kind: move.kind,
+        text: oneMove(move)
       }))
     }
   };
@@ -428,6 +438,7 @@ const jiraSearchApi = {
   buildRows,
   filterByTransition,
   metricsForRows,
+  countMoves,
   collectIssues
 };
 
