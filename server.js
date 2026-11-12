@@ -194,13 +194,12 @@ async function jiraPost(config, body, fetchImpl) {
   return jiraCall(config, searchUrl(config.baseUrl), 'POST', body, fetchImpl);
 }
 
-async function loadSubsidiaryField(config, fetchImpl) {
+async function loadFieldCatalog(config, fetchImpl) {
   try {
-    const data = await jiraCall(config, fieldsUrl(config.baseUrl), 'GET', null, fetchImpl);
-    return jira.subsidiaryFieldId(data);
+    return await jiraCall(config, fieldsUrl(config.baseUrl), 'GET', null, fetchImpl);
   } catch (err) {
     if (err && (err.status === 401 || err.status === 403)) throw err;
-    return '';
+    return [];
   }
 }
 
@@ -500,14 +499,17 @@ async function runSearch(input, fetchImpl = global.fetch, filePath = METRICS_FIL
   }
   const pendingFilters = { ...filters, days: split.pending };
   const config = jiraConfig();
-  const subsidiaryField = await loadSubsidiaryField(config, fetchImpl);
-  const fields = subsidiaryField ? jira.JIRA_FIELDS.concat(subsidiaryField) : jira.JIRA_FIELDS.slice();
+  const catalog = await loadFieldCatalog(config, fetchImpl);
+  const subsidiaryField = jira.subsidiaryFieldId(catalog);
+  const configurationField = jira.configurationFieldId(catalog);
+  const extraFields = [...new Set([subsidiaryField, configurationField].filter(Boolean))];
+  const fields = jira.JIRA_FIELDS.concat(extraFields);
   const jql = jira.buildSearchJql(pendingFilters);
   const collected = await jira.collectIssues(body => jiraPost(config, body, fetchImpl), jql, fields);
   for (const issue of collected.issues) {
     issue.changelog = { histories: await loadChangelog(config, issue.key, fetchImpl) };
   }
-  const built = jira.buildRows(collected.issues, { ...pendingFilters, subsidiaryField });
+  const built = jira.buildRows(collected.issues, { ...pendingFilters, subsidiaryField, configurationField });
   return {
     jql,
     total: built.rows.length,

@@ -4,6 +4,7 @@ const JIRA_PAGE_SIZE = 50;
 const JIRA_MAX_ISSUES = 1000;
 const JIRA_FIELDS = ['summary', 'status', 'assignee', 'updated'];
 const COE_SUBSIDIARIES_NAME = 'COE_subsidiaries';
+const CONFIGURATION_TYPES_NAME = 'Configuration types-ES2';
 const JIRA_TZ = 'America/Sao_Paulo';
 
 function fail(status, message) {
@@ -338,20 +339,81 @@ function fieldKey(name) {
   return foldStatus(name).replace(/[^a-z0-9]/g, '');
 }
 
-function subsidiaryFieldId(payload) {
+function validFieldId(value) {
+  const id = String(value || '');
+  return /^(customfield_\d+|[A-Za-z][A-Za-z0-9_]*)$/.test(id) ? id : '';
+}
+
+function fieldIdByName(payload, name) {
   const list = Array.isArray(payload)
     ? payload
     : (payload && Array.isArray(payload.values) ? payload.values : []);
-  const wanted = fieldKey(COE_SUBSIDIARIES_NAME);
-  const matches = list.filter(field => fieldKey(field && (field.name || field.untranslatedName)) === wanted);
-  if (!matches.length) return '';
-  const exact = matches.find(field => (
-    String(field.name || '') === COE_SUBSIDIARIES_NAME
-    || String(field.untranslatedName || '') === COE_SUBSIDIARIES_NAME
+  const wanted = fieldKey(name);
+  const wantedLabel = String(name || '').trim().replace(/:+$/, '').trim();
+  const matches = list.filter(field => (
+    fieldKey(field && (field.name || field.untranslatedName)) === wanted && validFieldId(field && field.id)
   ));
-  const id = String((exact || matches[0]).id || '');
-  if (!/^(customfield_\d+|[A-Za-z][A-Za-z0-9_]*)$/.test(id)) return '';
-  return id;
+  if (!matches.length) return '';
+  const exact = matches.find(field => {
+    const labels = [field.name, field.untranslatedName].map(label => String(label || '').trim().replace(/:+$/, '').trim());
+    return labels.includes(wantedLabel) || labels.includes(String(name || '').trim());
+  });
+  return validFieldId((exact || matches[0]).id);
+}
+
+function subsidiaryFieldId(payload) {
+  return fieldIdByName(payload, COE_SUBSIDIARIES_NAME);
+}
+
+function configurationFieldId(payload) {
+  return fieldIdByName(payload, CONFIGURATION_TYPES_NAME);
+}
+
+function firstConfigurationType(value) {
+  if (value == null || value === '') return '';
+  if (Array.isArray(value)) return value.length ? firstConfigurationType(value[0]) : '';
+  if (typeof value === 'object') {
+    if (Object.prototype.hasOwnProperty.call(value, 'value')) return firstConfigurationType(value.value);
+    if (Object.prototype.hasOwnProperty.call(value, 'name')) return firstConfigurationType(value.name);
+    return '';
+  }
+  const text = String(value).replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.split(/\s[-–—]\s/)[0].trim();
+}
+
+function readConfigurationType(fields, fieldId) {
+  if (!fields || !fieldId || !Object.prototype.hasOwnProperty.call(fields, fieldId)) return '';
+  return firstConfigurationType(fields[fieldId]);
+}
+
+function subsidiaryIncludes(value, name) {
+  if (!name) return true;
+  const key = String(name).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  return String(value || '').split(',').map(part => part.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()).filter(Boolean).includes(key);
+}
+
+function promotionCounts(rows, subsidiaryName, user) {
+  const counts = new Map();
+  const wanted = foldStatus(user);
+  (Array.isArray(rows) ? rows : []).forEach(row => {
+    const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
+    changes.forEach(change => {
+      const kind = changeKind(change);
+      if (kind !== 'todo' && kind !== 'clarification') return;
+      if (wanted && change && change.author && !authorMatches(user, change.author)) return;
+      const subsidiary = change && change.subsidiary != null && change.subsidiary !== ''
+        ? change.subsidiary
+        : (row && row.subsidiary);
+      if (!subsidiaryIncludes(subsidiary, subsidiaryName)) return;
+      const label = firstConfigurationType(change && change.promotion != null ? change.promotion : (row && row.promotion));
+      counts.set(label, (counts.get(label) || 0) + 1);
+    });
+  });
+  return [...counts.entries()]
+    .filter(([, value]) => value > 0)
+    .map(([label, value]) => ({ label: label || '(vazio)', value }))
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, 'en'));
 }
 
 function subsidiaryText(value) {
@@ -486,8 +548,9 @@ function countMoves(rows) {
   return { all: todo + clarification, todo, clarification };
 }
 
-function toRow(issue, windows, user, fieldId) {
+function toRow(issue, windows, user, fieldId, configurationField) {
   const fields = issue && issue.fields ? issue.fields : {};
+  const promotion = readConfigurationType(fields, configurationField);
   const history = statusHistory(issue).map(move => {
     const parts = move.at ? qualifyingParts(move.at, windows) : null;
     return {
@@ -511,6 +574,7 @@ function toRow(issue, windows, user, fieldId) {
     assignee: personName(fields.assignee),
     moveText: shown.map(oneMove).join('\n'),
     subsidiary,
+    promotion,
     corrected,
     kinds,
     inWindow: statusMoves.length > 0,
@@ -530,6 +594,7 @@ function toRow(issue, windows, user, fieldId) {
         minutes: move.parts.minutes,
         author: authorNames(move.author).join(' '),
         subsidiary,
+        promotion,
         kind: move.kind,
         text: oneMove(move)
       }))
@@ -542,7 +607,7 @@ function buildRows(issues, filters) {
   const rows = [];
   let dropped = 0;
   issues.forEach(issue => {
-    const row = toRow(issue, windows, filters.user, filters.subsidiaryField);
+    const row = toRow(issue, windows, filters.user, filters.subsidiaryField, filters.configurationField);
     if (!row.inWindow) {
       dropped += 1;
       return;
@@ -606,7 +671,12 @@ const jiraSearchApi = {
   JIRA_FIELDS,
   JIRA_TZ,
   COE_SUBSIDIARIES_NAME,
+  CONFIGURATION_TYPES_NAME,
+  fieldIdByName,
   subsidiaryFieldId,
+  configurationFieldId,
+  firstConfigurationType,
+  promotionCounts,
   hourBands,
   metricLeaders,
   assertSearchInput,

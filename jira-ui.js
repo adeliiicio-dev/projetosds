@@ -393,13 +393,32 @@ function jrExtraTables(name) {
     return `<div class="rp-pair mt-3">
       <div class="rp-pane">${types}</div>
       <div class="rp-pane">${fixed}</div>
-    </div>`;
+    </div>
+    ${jrPromotionTable(name)}`;
   }
   return `<div class="rp-pair mt-3">
     <div class="rp-pane">${types}<div class="mt-3">${fixed}</div></div>
     <div class="rp-pane">${jrSlideTable()}</div>
   </div>
-  ${jrLeadSentences()}`;
+  ${jrLeadSentences()}
+  ${jrPromotionTable('')}`;
+}
+
+function jrPromotionSource() {
+  const issues = Array.isArray(jrState.issues) ? jrState.issues : [];
+  if (jrState.period !== 'saved') return issues;
+  const dates = new Set(jrPeriodDates());
+  return issues.map(row => {
+    const changes = (row && row.payload && row.payload.statusChanges || []).filter(change => dates.has(change && change.date));
+    return { ...row, payload: { ...(row.payload || {}), statusChanges: changes } };
+  });
+}
+
+function jrPromotionTable(name) {
+  const items = typeof jiraSearch !== 'undefined' && jiraSearch.promotionCounts
+    ? jiraSearch.promotionCounts(jrPromotionSource(), name, jrCurrentUser())
+    : [];
+  return `<div class="mt-3">${jrCountTable('Type of promotion', items, 'Quantity')}</div>`;
 }
 
 function jrTied(items) {
