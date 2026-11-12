@@ -432,12 +432,12 @@ function jrConfigurationPayload(name) {
     const key = row.key || '';
     if (seen.has(key)) return;
     seen.add(key);
-    const raw = Object.prototype.hasOwnProperty.call(row, 'issueType') ? row.issueType : null;
-    items.push({ key, 'Issue Type': raw });
+    const raw = Object.prototype.hasOwnProperty.call(row, 'configurationType') ? row.configurationType : null;
+    items.push({ key, 'Configuration Type': raw });
   });
   const shown = typeof jiraSearch !== 'undefined' && jiraSearch.stripSecrets ? jiraSearch.stripSecrets(items, '') : items;
   return `<details class="mt-2" open>
-    <summary>Payload Issue Type</summary>
+    <summary>Payload Configuration Type</summary>
     <pre class="jr-payload">${jrEsc(JSON.stringify(shown, null, 2))}</pre>
   </details>`;
 }
@@ -610,7 +610,7 @@ function jrSummary(metrics) {
 }
 
 function jrConfigurationCell(row) {
-  const raw = row && Object.prototype.hasOwnProperty.call(row, 'issueType') ? row.issueType : null;
+  const raw = row && Object.prototype.hasOwnProperty.call(row, 'configurationType') ? row.configurationType : null;
   const shown = typeof jiraSearch !== 'undefined' && jiraSearch.stripSecrets ? jiraSearch.stripSecrets(raw, '') : raw;
   return `<pre class="jr-payload mb-0">${jrEsc(JSON.stringify(shown, null, 2))}</pre>`;
 }
@@ -685,7 +685,7 @@ function jrRenderResults() {
   const noun = selected === 1 ? 'mudança' : 'mudanças';
   meta.innerHTML = `<p class="muted mb-2">${selected} ${noun} neste filtro.</p>${notes.map(note => `<p class="muted mb-2">${jrEsc(note)}</p>`).join('')}`;
   table.innerHTML = visible.length ? `<div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
-      <thead><tr><th>Key</th><th>Summary</th><th>Movimento</th><th>Issue Type</th></tr></thead>
+      <thead><tr><th>Key</th><th>Summary</th><th>Movimento</th><th>Configuration Type</th></tr></thead>
       <tbody>${visible.map(row => `<tr>
         <td>${jrKeyCell(row)}</td>
         <td class="jr-summary" title="${jrEsc(row.summary)}">${jrEsc(row.summary || '—')}</td>
@@ -765,6 +765,42 @@ async function jrConsult(event) {
   } finally {
     jrState.loading = false;
     jrRenderResults();
+  }
+}
+
+async function jrInspectTicket(event) {
+  event.preventDefault();
+  const output = document.getElementById('jrInspectOut');
+  const button = document.getElementById('jrInspect');
+  const input = document.getElementById('jrInspectKey');
+  if (!output || !button || !input) return;
+  const key = input.value.trim();
+  if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(key)) {
+    output.innerHTML = '<p class="muted mb-0">Informe a chave do ticket, como PROJ-123.</p>';
+    return;
+  }
+  button.disabled = true;
+  output.innerHTML = '<p class="muted mb-0">Consultando esse ticket…</p>';
+  try {
+    const response = await fetch('/api/jira/issue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ key }),
+      signal: AbortSignal.timeout(120000)
+    });
+    let data = null;
+    try { data = await response.json(); } catch { data = null; }
+    if (!response.ok) throw new Error((data && data.error) || 'Não foi possível consultar o ticket.');
+    const issue = data && Object.prototype.hasOwnProperty.call(data, 'issue') ? data.issue : null;
+    const shown = typeof jiraSearch !== 'undefined' && jiraSearch.stripSecrets ? jiraSearch.stripSecrets(issue, '') : issue;
+    output.innerHTML = `<pre class="jr-payload">${jrEsc(JSON.stringify(shown, null, 2))}</pre>`;
+  } catch (err) {
+    const message = err && (err.name === 'TimeoutError' || err.name === 'AbortError')
+      ? 'O Jira demorou demais para responder.'
+      : ((err && err.message) || 'Não foi possível consultar o ticket.');
+    output.innerHTML = `<p class="muted mb-0">${jrEsc(message)}</p>`;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -929,6 +965,8 @@ if (typeof document !== 'undefined') {
     document.getElementById('jrTo').addEventListener('input', jrRenderSlots);
     document.getElementById('jrUser').addEventListener('input', jrRenderResults);
     document.getElementById('jrForm').addEventListener('submit', jrConsult);
+    const inspectForm = document.getElementById('jrInspectForm');
+    if (inspectForm) inspectForm.addEventListener('submit', jrInspectTicket);
     document.getElementById('jrNoteForm').addEventListener('submit', jrSaveNote);
     const reportDays = document.getElementById('rpDays');
     if (reportDays) reportDays.addEventListener('click', () => {

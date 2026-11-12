@@ -325,12 +325,13 @@ async function testWindowsAndMoves() {
     { id: 'customfield_10001', name: 'Other' },
     { id: 'customfield_10234', name: 'COE_subsidiaries' }
   ]), 'customfield_10234');
-  assert.equal(jira.issueTypeFieldId([
+  assert.equal(jira.configurationTypeFieldId([
+    { id: 'issuetype', name: 'Issue Type' },
     { id: 'customfield_10999', name: 'Configuration types-ES2:' },
-    { id: 'not-a-field', name: 'Issue Type:' },
-    { id: 'issuetype', name: 'Issue Type:' }
-  ]), 'issuetype');
-  assert.equal(jira.issueTypeFieldId([{ id: 'customfield_10999', name: 'Configuration types-ES2' }]), '');
+    { id: 'not-a-field', name: 'Configuration Type:' },
+    { id: 'customfield_10888', name: 'Configuration Type:' }
+  ]), 'customfield_10888');
+  assert.equal(jira.configurationTypeFieldId([{ id: 'issuetype', name: 'Issue Type' }]), '');
   assert.equal(jira.firstConfigurationType({ id: '10001', name: 'Service Request', description: 'longer text', subtask: false }), 'Service Request');
   assert.equal(jira.firstConfigurationType({ value: 'BOGO', child: { value: 'Creation' } }), 'BOGO');
   assert.equal(jira.firstConfigurationType({ value: '', child: { value: 'Creation' } }), '');
@@ -357,20 +358,20 @@ async function testWindowsAndMoves() {
     summary: 'Brasil'
   });
   owned.fields.customfield_10234 = { value: 'Brasil' };
-  owned.fields.issuetype = { id: '10001', name: 'Rewards Boost', description: 'Publish', subtask: false };
+  owned.fields.customfield_10888 = { value: 'Rewards Boost', child: { value: 'Publish' } };
   const withSub = jira.buildRows([owned], {
     ...FILTERS,
     subsidiaryField: 'customfield_10234',
-    issueTypeField: 'issuetype'
+    configurationTypeField: 'customfield_10888'
   });
   assert.equal(withSub.rows[0].subsidiary, 'Brasil');
   assert.equal(withSub.rows[0].payload.statusChanges[0].subsidiary, 'Brasil');
   assert.equal(withSub.rows[0].promotion, 'Rewards Boost');
   assert.equal(withSub.rows[0].payload.statusChanges[0].promotion, 'Rewards Boost');
-  assert.equal(withSub.rows[0].issueType.name, 'Rewards Boost');
-  assert.equal(withSub.rows[0].issueType.description, 'Publish');
-  assert.equal(withSub.rows[0].payload.fields.issueType.name, 'Rewards Boost');
-  assert.equal(withSub.rows[0].payload.fields.issueType.description, 'Publish');
+  assert.equal(withSub.rows[0].configurationType.value, 'Rewards Boost');
+  assert.equal(withSub.rows[0].configurationType.child.value, 'Publish');
+  assert.equal(withSub.rows[0].payload.fields.configurationType.value, 'Rewards Boost');
+  assert.equal(withSub.rows[0].payload.fields.configurationType.child.value, 'Publish');
   const subMetrics = jira.metricsForRows(withSub.rows, 'Ada', 'all', RANGE_18_19);
   assert.equal(subMetrics.subsidiaries[0].name, 'Brasil');
   assert.equal(subMetrics.subsidiaries[0].days[1], 1);
@@ -418,31 +419,31 @@ async function testWindowsAndMoves() {
   assert.deepEqual(jira.promotionCounts(typed, 'Colombia', 'Ada'), []);
   const fromField = [{
     subsidiary: 'Chile',
-    issueType: { value: 'Add On - Modify Dates (Start/End)', child: { value: 'Creation' } },
+    configurationType: { value: 'Add On - Modify Dates (Start/End)', child: { value: 'Creation' } },
     payload: {
       statusChanges: [{
         kind: 'todo',
         subsidiary: 'Chile',
         author: 'Ada',
         promotion: 'Add On',
-        issueType: { value: 'Add On - Modify Dates (Start/End)', child: { value: 'Creation' } }
+        configurationType: { value: 'Add On - Modify Dates (Start/End)', child: { value: 'Creation' } }
       }]
     }
   }, {
     subsidiary: 'Mexico',
-    issueType: null,
+    configurationType: null,
     payload: {
-      statusChanges: [{ kind: 'todo', subsidiary: 'Mexico', author: 'Ada', promotion: 'ignored', issueType: null }]
+      statusChanges: [{ kind: 'todo', subsidiary: 'Mexico', author: 'Ada', promotion: 'ignored', configurationType: null }]
     }
   }, {
     subsidiary: 'Peru',
-    issueType: { value: '', child: { value: 'Creation' } },
+    configurationType: { value: '', child: { value: 'Creation' } },
     payload: {
       statusChanges: [{
         kind: 'todo',
         subsidiary: 'Peru',
         author: 'Ada',
-        issueType: { value: '', child: { value: 'Creation' } }
+        configurationType: { value: '', child: { value: 'Creation' } }
       }]
     }
   }];
@@ -584,7 +585,8 @@ async function testHttp() {
           { id: 'customfield_10001', name: 'Other' },
           { id: 'customfield_10234', name: 'COE_subsidiaries' },
           { id: 'customfield_10999', name: 'Configuration types-ES2:' },
-          { id: 'issuetype', name: 'Issue Type:' }
+          { id: 'issuetype', name: 'Issue Type' },
+          { id: 'customfield_10888', name: 'Configuration Type:' }
         ])
       };
     }
@@ -613,7 +615,7 @@ async function testHttp() {
     bare.fields = {
       ...bare.fields,
       customfield_10234: { value: 'Brasil' },
-      issuetype: { id: '10001', name: 'Service Request', description: 'Creation', subtask: false }
+      customfield_10888: { value: 'Service Request', child: { value: 'Creation' } }
     };
     return {
       ok: true,
@@ -650,12 +652,13 @@ async function testHttp() {
     assert.equal(calls[1].headers.Authorization, `Bearer ${token}`);
     assert.equal(String(calls[1].url), 'http://jira.example/jira/rest/api/2/search');
     assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_10234'));
-    assert.ok(JSON.parse(calls[1].body).fields.includes('issuetype'));
+    assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_10888'));
+    assert.equal(JSON.parse(calls[1].body).fields.includes('issuetype'), false);
     assert.equal(JSON.parse(calls[1].body).fields.includes('customfield_10999'), false);
     assert.equal(data.issues[0].payload.statusChanges[0].promotion, 'Service Request');
-    assert.equal(data.issues[0].issueType.name, 'Service Request');
-    assert.equal(data.issues[0].payload.fields.issueType.description, 'Creation');
-    assert.equal(data.issues[0].payload.fields.issueType.name, 'Service Request');
+    assert.equal(data.issues[0].configurationType.value, 'Service Request');
+    assert.equal(data.issues[0].configurationType.child.value, 'Creation');
+    assert.equal(data.issues[0].payload.fields.configurationType.value, 'Service Request');
     assert.equal(JSON.stringify(data).includes(token), false);
     assert.equal(calls[2].method, 'GET');
     assert.match(String(calls[2].url), /\/rest\/api\/2\/issue\/LC-7\?expand=changelog$/);
@@ -690,6 +693,11 @@ async function testHttp() {
     assert.match(page.type, /text\/html/);
     assert.match(page.body, /Relatório semanal/);
     assert.match(page.body, /id="rpDays"/);
+  assert.match(page.body, /id="jrInspectForm"/);
+  assert.match(page.body, /id="jrInspectKey"/);
+  assert.match(page.body, /id="jrInspect"/);
+  const weeklyForm = page.body.slice(page.body.indexOf('<form id="jrForm"'), page.body.indexOf('</form>', page.body.indexOf('<form id="jrForm"')) + 7);
+  assert.equal(weeklyForm.includes('jrInspect'), false);
     assert.match(page.body, /Anotações/);
     assert.equal(page.body.includes('id="rpPasteCard"'), false);
     assert.equal(page.body.includes('id="rpReport"'), false);
@@ -953,12 +961,81 @@ function testSources() {
   assert.equal(/JIRA_USER|JIRA_API_TOKEN/.test(local), false);
 }
 
+async function testIssueLookup() {
+  const saved = { JIRA_URL: process.env.JIRA_URL, BEARER_TOKEN: process.env.BEARER_TOKEN };
+  const token = 'local-test-token';
+  process.env.JIRA_URL = 'http://jira.example/jira';
+  process.env.BEARER_TOKEN = token;
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url: String(url), method: options.method, body: options.body || '' });
+    const href = String(url);
+    if (href.endsWith('/rest/api/2/field')) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify([
+          { id: 'customfield_10888', name: 'Configuration Type:' },
+          { id: 'issuetype', name: 'Issue Type' }
+        ])
+      };
+    }
+    if (options.method === 'GET' && /\/rest\/api\/2\/issue\/LC-9\?/.test(href)) {
+      const parsed = new URL(href);
+      assert.equal(parsed.searchParams.get('fields'), '*all');
+      assert.equal(parsed.searchParams.get('expand'), 'names');
+      assert.equal(options.body, undefined);
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          key: 'LC-9',
+          fields: {
+            summary: `Portal ${token}`,
+            password: 'hidden-secret',
+            customfield_10888: { value: 'BOGO', child: { value: 'Creation' } }
+          }
+        })
+      };
+    }
+    throw new Error(`caminho inesperado ${options.method} ${url}`);
+  };
+  const { app, port } = await listen(server.createHandler({ fetchImpl, metricsPath: EMPTY_METRICS }));
+  try {
+    const bad = await requestOnce(port, 'POST', '/api/jira/issue', JSON.stringify({ key: 'not a key' }));
+    assert.equal(bad.status, 400);
+    assert.equal(calls.length, 0);
+    const wrong = await requestOnce(port, 'GET', '/api/jira/issue');
+    assert.equal(wrong.status, 405);
+    const ok = await requestOnce(port, 'POST', '/api/jira/issue', JSON.stringify({ key: 'LC-9' }));
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.includes(token), false);
+    assert.equal(ok.body.includes('hidden-secret'), false);
+    const data = JSON.parse(ok.body);
+    assert.equal(data.issue.key, 'LC-9');
+    assert.equal(data.issue.fields.summary, 'Portal …');
+    assert.equal(data.issue.fields.password, '…');
+    assert.equal(data.issue.fields.customfield_10888.value, 'BOGO');
+    assert.equal(data.issue.names.customfield_10888, 'Configuration Type:');
+    assert.equal(data.issue.names.issuetype, 'Issue Type');
+    assert.equal(calls.some(call => call.method === 'POST'), false);
+    assert.equal(calls.some(call => String(call.url).includes('/rest/api/2/search')), false);
+  } finally {
+    await new Promise(resolve => app.close(resolve));
+    ['JIRA_URL', 'BEARER_TOKEN'].forEach(key => {
+      if (saved[key] == null) delete process.env[key];
+      else process.env[key] = saved[key];
+    });
+  }
+}
+
 async function main() {
   await testJql();
   await testWindowsAndMoves();
   await testPaging();
   await testHttp();
   await testSavedDays();
+  await testIssueLookup();
   testSources();
   console.log('jira search tests ok');
 }

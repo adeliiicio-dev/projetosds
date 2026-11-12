@@ -395,6 +395,20 @@
             <button type="submit" class="btn btn-samsung" id="jrSearch"><i class="bi bi-search"></i> Consultar</button>
           </form>
 
+          <form id="jrInspectForm" class="section-card">
+            <div class="section-title">
+              <i class="bi bi-ticket-detailed text-accent fs-4"></i>
+              <h4 class="m-0">Um ticket</h4>
+            </div>
+            <label class="form-label" for="jrInspectKey">Chave</label>
+            <div class="d-flex flex-wrap gap-2">
+              <input id="jrInspectKey" class="form-control" placeholder="PROJ-123" autocomplete="off" style="max-width: 16rem;">
+              <button type="submit" class="btn btn-samsung" id="jrInspect">Consultar</button>
+            </div>
+            <p class="muted mt-3 mb-0">Consulta só esse ticket, sem a busca da semana. O JSON mostra os campos para identificar o nome.</p>
+            <div id="jrInspectOut" class="mt-3"></div>
+          </form>
+
           <div class="section-card">
             <div class="section-title">
               <i class="bi bi-table text-accent fs-4"></i>
@@ -468,7 +482,7 @@
   <script src="knox.js?v=3"></script>
   <script src="prioridades.js?v=10"></script>
   <script src="reports.js?v=15"></script>
-  <script src="jira-search.js?v=14"></script>
-  <script src="jira-ui.js?v=23"></script>
+  <script src="jira-search.js?v=15"></script>
+  <script src="jira-ui.js?v=24"></script>
 </body>
 </html>

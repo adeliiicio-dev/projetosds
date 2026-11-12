@@ -130,6 +130,24 @@ function fieldsUrl(baseUrl) {
   return url;
 }
 
+function issueInspectUrl(baseUrl, key) {
+  if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(key || '')) {
+    const err = new Error('Chave de ticket inválida.');
+    err.status = 400;
+    throw err;
+  }
+  const url = new URL(baseUrl);
+  const prefix = url.pathname.replace(/\/+$/, '').replace(/\/rest\/api\/\d+\/search$/i, '');
+  url.pathname = `${prefix}/rest/api/2/issue/${encodeURIComponent(key)}`.replace(/\/{2,}/g, '/');
+  url.search = '';
+  url.hash = '';
+  url.username = '';
+  url.password = '';
+  url.searchParams.set('fields', '*all');
+  url.searchParams.set('expand', 'names');
+  return url;
+}
+
 function issueChangelogUrl(baseUrl, key) {
   if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(key || '')) {
     const err = new Error('Chave de ticket inválida.');
@@ -150,9 +168,14 @@ function issueChangelogUrl(baseUrl, key) {
 async function jiraCall(config, url, method, body, fetchImpl) {
   const fieldList = method === 'GET' && url.pathname.endsWith('/rest/api/2/field') && !url.search;
   const changelog = method === 'GET' && /\/rest\/api\/2\/issue\/[^/]+$/.test(url.pathname) && url.searchParams.get('expand') === 'changelog';
+  const issueInspect = method === 'GET'
+    && /\/rest\/api\/2\/issue\/[^/]+$/.test(url.pathname)
+    && url.searchParams.get('fields') === '*all'
+    && url.searchParams.get('expand') === 'names'
+    && !body;
   const allowed = method === 'POST'
     ? url.pathname.endsWith('/rest/api/2/search')
-    : fieldList || changelog;
+    : fieldList || changelog || issueInspect;
   if (!allowed) {
     const err = new Error('Consulta Jira bloqueada.');
     err.status = 500;
@@ -201,6 +224,45 @@ async function loadFieldCatalog(config, fetchImpl) {
     if (err && (err.status === 401 || err.status === 403)) throw err;
     return [];
   }
+}
+
+const SECRET_KEY = /token|password|secret|authorization|api[_-]?key|credential/i;
+
+function redactSecrets(value, token) {
+  const cleaned = jira.stripSecrets(value, token);
+  const walk = item => {
+    if (Array.isArray(item)) return item.map(walk);
+    if (item && typeof item === 'object') {
+      const out = {};
+      Object.keys(item).forEach(key => {
+        if (typeof item[key] === 'string' && SECRET_KEY.test(key)) out[key] = '…';
+        else out[key] = walk(item[key]);
+      });
+      return out;
+    }
+    return item;
+  };
+  return walk(cleaned);
+}
+
+async function runIssueLookup(key, fetchImpl = global.fetch) {
+  const clean = String(key || '').trim();
+  if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(clean)) {
+    const err = new Error('Chave de ticket inválida.');
+    err.status = 400;
+    throw err;
+  }
+  const config = jiraConfig();
+  const catalog = await loadFieldCatalog(config, fetchImpl);
+  const issue = await jiraCall(config, issueInspectUrl(config.baseUrl, clean), 'GET', null, fetchImpl);
+  const names = issue && issue.names && typeof issue.names === 'object' ? { ...issue.names } : {};
+  const list = Array.isArray(catalog) ? catalog : (catalog && Array.isArray(catalog.values) ? catalog.values : []);
+  list.forEach(field => {
+    const id = field && field.id;
+    const name = field && (field.name || field.untranslatedName);
+    if (id && name && names[id] == null) names[id] = name;
+  });
+  return { issue: redactSecrets({ ...issue, names }, config.token) };
 }
 
 async function loadChangelog(config, key, fetchImpl) {
@@ -501,8 +563,8 @@ async function runSearch(input, fetchImpl = global.fetch, filePath = METRICS_FIL
   const config = jiraConfig();
   const catalog = await loadFieldCatalog(config, fetchImpl);
   const subsidiaryField = jira.subsidiaryFieldId(catalog);
-  const issueTypeField = jira.issueTypeFieldId(catalog);
-  const extraFields = [...new Set([subsidiaryField, issueTypeField].filter(Boolean))];
+  const configurationTypeField = jira.configurationTypeFieldId(catalog);
+  const extraFields = [...new Set([subsidiaryField, configurationTypeField].filter(Boolean))];
   const fields = jira.JIRA_FIELDS.concat(extraFields);
   const jql = jira.buildSearchJql(pendingFilters);
   const collected = await jira.collectIssues(body => jiraPost(config, body, fetchImpl), jql, fields);
@@ -512,7 +574,7 @@ async function runSearch(input, fetchImpl = global.fetch, filePath = METRICS_FIL
   const built = jira.buildRows(collected.issues, {
     ...pendingFilters,
     subsidiaryField,
-    issueTypeField,
+    configurationTypeField,
     token: config.token
   });
   return {
@@ -600,6 +662,21 @@ function sendFile(res, filePath, method) {
 
 async function handleRequest(req, res, options) {
   const url = new URL(req.url, 'http://127.0.0.1');
+  if (url.pathname === '/api/jira/issue') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Use POST.' });
+      return;
+    }
+    const raw = await readBody(req);
+    let body;
+    try { body = JSON.parse(raw || '{}'); } catch {
+      sendJson(res, 400, { error: 'JSON inválido.' });
+      return;
+    }
+    const result = await runIssueLookup(body && body.key, options.fetchImpl || global.fetch);
+    sendJson(res, 200, result);
+    return;
+  }
   if (url.pathname === '/api/jira/search') {
     if (req.method !== 'POST') {
       sendJson(res, 405, { error: 'Use POST.' });
