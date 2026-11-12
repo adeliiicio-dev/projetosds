@@ -432,12 +432,12 @@ function jrConfigurationPayload(name) {
     const key = row.key || '';
     if (seen.has(key)) return;
     seen.add(key);
-    const raw = Object.prototype.hasOwnProperty.call(row, 'configurationType') ? row.configurationType : null;
-    items.push({ key, 'Configuration types-ES2': raw });
+    const raw = Object.prototype.hasOwnProperty.call(row, 'issueType') ? row.issueType : null;
+    items.push({ key, 'Issue Type': raw });
   });
   const shown = typeof jiraSearch !== 'undefined' && jiraSearch.stripSecrets ? jiraSearch.stripSecrets(items, '') : items;
   return `<details class="mt-2" open>
-    <summary>Payload Configuration types-ES2</summary>
+    <summary>Payload Issue Type</summary>
     <pre class="jr-payload">${jrEsc(JSON.stringify(shown, null, 2))}</pre>
   </details>`;
 }
@@ -610,7 +610,7 @@ function jrSummary(metrics) {
 }
 
 function jrConfigurationCell(row) {
-  const raw = row && Object.prototype.hasOwnProperty.call(row, 'configurationType') ? row.configurationType : null;
+  const raw = row && Object.prototype.hasOwnProperty.call(row, 'issueType') ? row.issueType : null;
   const shown = typeof jiraSearch !== 'undefined' && jiraSearch.stripSecrets ? jiraSearch.stripSecrets(raw, '') : raw;
   return `<pre class="jr-payload mb-0">${jrEsc(JSON.stringify(shown, null, 2))}</pre>`;
 }
@@ -685,7 +685,7 @@ function jrRenderResults() {
   const noun = selected === 1 ? 'mudança' : 'mudanças';
   meta.innerHTML = `<p class="muted mb-2">${selected} ${noun} neste filtro.</p>${notes.map(note => `<p class="muted mb-2">${jrEsc(note)}</p>`).join('')}`;
   table.innerHTML = visible.length ? `<div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
-      <thead><tr><th>Key</th><th>Summary</th><th>Movimento</th><th>Configuration types-ES2</th></tr></thead>
+      <thead><tr><th>Key</th><th>Summary</th><th>Movimento</th><th>Issue Type</th></tr></thead>
       <tbody>${visible.map(row => `<tr>
         <td>${jrKeyCell(row)}</td>
         <td class="jr-summary" title="${jrEsc(row.summary)}">${jrEsc(row.summary || '—')}</td>

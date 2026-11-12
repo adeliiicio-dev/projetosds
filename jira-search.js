@@ -4,7 +4,7 @@ const JIRA_PAGE_SIZE = 50;
 const JIRA_MAX_ISSUES = 1000;
 const JIRA_FIELDS = ['summary', 'status', 'assignee', 'updated'];
 const COE_SUBSIDIARIES_NAME = 'COE_subsidiaries';
-const CONFIGURATION_TYPES_NAME = 'Configuration types-ES2';
+const ISSUE_TYPE_NAME = 'Issue Type';
 const JIRA_TZ = 'America/Sao_Paulo';
 
 function fail(status, message) {
@@ -365,8 +365,8 @@ function subsidiaryFieldId(payload) {
   return fieldIdByName(payload, COE_SUBSIDIARIES_NAME);
 }
 
-function configurationFieldId(payload) {
-  return fieldIdByName(payload, CONFIGURATION_TYPES_NAME);
+function issueTypeFieldId(payload) {
+  return fieldIdByName(payload, ISSUE_TYPE_NAME);
 }
 
 function stripSecrets(value, token) {
@@ -432,12 +432,12 @@ function readConfigurationRaw(fields, fieldId) {
 }
 
 function promotionName(change, row) {
-  const holder = change && Object.prototype.hasOwnProperty.call(change, 'configurationType')
+  const holder = change && Object.prototype.hasOwnProperty.call(change, 'issueType')
     ? change
-    : (row && Object.prototype.hasOwnProperty.call(row, 'configurationType') ? row : null);
+    : (row && Object.prototype.hasOwnProperty.call(row, 'issueType') ? row : null);
   if (holder) {
-    if (configurationFieldEmpty(holder.configurationType)) return '(vazio)';
-    return firstConfigurationType(holder.configurationType) || '(missing first value)';
+    if (configurationFieldEmpty(holder.issueType)) return '(vazio)';
+    return firstConfigurationType(holder.issueType) || '(missing first value)';
   }
   return firstConfigurationType(change && change.promotion != null ? change.promotion : (row && row.promotion)) || '(vazio)';
 }
@@ -603,10 +603,10 @@ function countMoves(rows) {
   return { all: todo + clarification, todo, clarification };
 }
 
-function toRow(issue, windows, user, fieldId, configurationField, token) {
+function toRow(issue, windows, user, fieldId, issueTypeField, token) {
   const fields = issue && issue.fields ? issue.fields : {};
-  const configurationType = stripSecrets(readConfigurationRaw(fields, configurationField), token);
-  const promotion = configurationFieldEmpty(configurationType) ? '' : firstConfigurationType(configurationType);
+  const issueType = stripSecrets(readConfigurationRaw(fields, issueTypeField), token);
+  const promotion = configurationFieldEmpty(issueType) ? '' : firstConfigurationType(issueType);
   const history = statusHistory(issue).map(move => {
     const parts = move.at ? qualifyingParts(move.at, windows) : null;
     return {
@@ -631,7 +631,7 @@ function toRow(issue, windows, user, fieldId, configurationField, token) {
     moveText: shown.map(oneMove).join('\n'),
     subsidiary,
     promotion,
-    configurationType,
+    issueType,
     corrected,
     kinds,
     inWindow: statusMoves.length > 0,
@@ -642,7 +642,7 @@ function toRow(issue, windows, user, fieldId, configurationField, token) {
         status: fields.status ?? null,
         assignee: fields.assignee ?? null,
         updated: fields.updated ?? null,
-        configurationType
+        issueType
       },
       statusChanges: statusMoves.map(move => ({
         from: move.from,
@@ -653,7 +653,7 @@ function toRow(issue, windows, user, fieldId, configurationField, token) {
         author: authorNames(move.author).join(' '),
         subsidiary,
         promotion,
-        configurationType,
+        issueType,
         kind: move.kind,
         text: oneMove(move)
       }))
@@ -666,7 +666,7 @@ function buildRows(issues, filters) {
   const rows = [];
   let dropped = 0;
   issues.forEach(issue => {
-    const row = toRow(issue, windows, filters.user, filters.subsidiaryField, filters.configurationField, filters.token);
+    const row = toRow(issue, windows, filters.user, filters.subsidiaryField, filters.issueTypeField, filters.token);
     if (!row.inWindow) {
       dropped += 1;
       return;
@@ -730,10 +730,10 @@ const jiraSearchApi = {
   JIRA_FIELDS,
   JIRA_TZ,
   COE_SUBSIDIARIES_NAME,
-  CONFIGURATION_TYPES_NAME,
+  ISSUE_TYPE_NAME,
   fieldIdByName,
   subsidiaryFieldId,
-  configurationFieldId,
+  issueTypeFieldId,
   configurationFieldEmpty,
   firstConfigurationType,
   stripSecrets,

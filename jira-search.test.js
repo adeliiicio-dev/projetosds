@@ -325,12 +325,13 @@ async function testWindowsAndMoves() {
     { id: 'customfield_10001', name: 'Other' },
     { id: 'customfield_10234', name: 'COE_subsidiaries' }
   ]), 'customfield_10234');
-  assert.equal(jira.configurationFieldId([
-    { id: 'customfield_10001', name: 'Other' },
-    { id: 'not-a-field', name: 'Configuration types-ES2:' },
-    { id: 'customfield_10999', name: 'Configuration types-ES2:' }
-  ]), 'customfield_10999');
-  assert.equal(jira.configurationFieldId([{ id: 'customfield_10001', name: 'Other' }]), '');
+  assert.equal(jira.issueTypeFieldId([
+    { id: 'customfield_10999', name: 'Configuration types-ES2:' },
+    { id: 'not-a-field', name: 'Issue Type:' },
+    { id: 'issuetype', name: 'Issue Type:' }
+  ]), 'issuetype');
+  assert.equal(jira.issueTypeFieldId([{ id: 'customfield_10999', name: 'Configuration types-ES2' }]), '');
+  assert.equal(jira.firstConfigurationType({ id: '10001', name: 'Service Request', description: 'longer text', subtask: false }), 'Service Request');
   assert.equal(jira.firstConfigurationType({ value: 'BOGO', child: { value: 'Creation' } }), 'BOGO');
   assert.equal(jira.firstConfigurationType({ value: '', child: { value: 'Creation' } }), '');
   assert.equal(jira.configurationFieldEmpty({ value: '', child: { value: 'Creation' } }), false);
@@ -356,19 +357,20 @@ async function testWindowsAndMoves() {
     summary: 'Brasil'
   });
   owned.fields.customfield_10234 = { value: 'Brasil' };
-  owned.fields.customfield_10999 = { value: 'Rewards Boost', child: { value: 'Publish' } };
+  owned.fields.issuetype = { id: '10001', name: 'Rewards Boost', description: 'Publish', subtask: false };
   const withSub = jira.buildRows([owned], {
     ...FILTERS,
     subsidiaryField: 'customfield_10234',
-    configurationField: 'customfield_10999'
+    issueTypeField: 'issuetype'
   });
   assert.equal(withSub.rows[0].subsidiary, 'Brasil');
   assert.equal(withSub.rows[0].payload.statusChanges[0].subsidiary, 'Brasil');
   assert.equal(withSub.rows[0].promotion, 'Rewards Boost');
   assert.equal(withSub.rows[0].payload.statusChanges[0].promotion, 'Rewards Boost');
-  assert.equal(withSub.rows[0].configurationType.value, 'Rewards Boost');
-  assert.equal(withSub.rows[0].configurationType.child.value, 'Publish');
-  assert.equal(withSub.rows[0].payload.fields.configurationType.child.value, 'Publish');
+  assert.equal(withSub.rows[0].issueType.name, 'Rewards Boost');
+  assert.equal(withSub.rows[0].issueType.description, 'Publish');
+  assert.equal(withSub.rows[0].payload.fields.issueType.name, 'Rewards Boost');
+  assert.equal(withSub.rows[0].payload.fields.issueType.description, 'Publish');
   const subMetrics = jira.metricsForRows(withSub.rows, 'Ada', 'all', RANGE_18_19);
   assert.equal(subMetrics.subsidiaries[0].name, 'Brasil');
   assert.equal(subMetrics.subsidiaries[0].days[1], 1);
@@ -416,31 +418,31 @@ async function testWindowsAndMoves() {
   assert.deepEqual(jira.promotionCounts(typed, 'Colombia', 'Ada'), []);
   const fromField = [{
     subsidiary: 'Chile',
-    configurationType: { value: 'Add On - Modify Dates (Start/End)', child: { value: 'Creation' } },
+    issueType: { value: 'Add On - Modify Dates (Start/End)', child: { value: 'Creation' } },
     payload: {
       statusChanges: [{
         kind: 'todo',
         subsidiary: 'Chile',
         author: 'Ada',
         promotion: 'Add On',
-        configurationType: { value: 'Add On - Modify Dates (Start/End)', child: { value: 'Creation' } }
+        issueType: { value: 'Add On - Modify Dates (Start/End)', child: { value: 'Creation' } }
       }]
     }
   }, {
     subsidiary: 'Mexico',
-    configurationType: null,
+    issueType: null,
     payload: {
-      statusChanges: [{ kind: 'todo', subsidiary: 'Mexico', author: 'Ada', promotion: 'ignored', configurationType: null }]
+      statusChanges: [{ kind: 'todo', subsidiary: 'Mexico', author: 'Ada', promotion: 'ignored', issueType: null }]
     }
   }, {
     subsidiary: 'Peru',
-    configurationType: { value: '', child: { value: 'Creation' } },
+    issueType: { value: '', child: { value: 'Creation' } },
     payload: {
       statusChanges: [{
         kind: 'todo',
         subsidiary: 'Peru',
         author: 'Ada',
-        configurationType: { value: '', child: { value: 'Creation' } }
+        issueType: { value: '', child: { value: 'Creation' } }
       }]
     }
   }];
@@ -581,7 +583,8 @@ async function testHttp() {
         text: async () => JSON.stringify([
           { id: 'customfield_10001', name: 'Other' },
           { id: 'customfield_10234', name: 'COE_subsidiaries' },
-          { id: 'customfield_10999', name: 'Configuration types-ES2:' }
+          { id: 'customfield_10999', name: 'Configuration types-ES2:' },
+          { id: 'issuetype', name: 'Issue Type:' }
         ])
       };
     }
@@ -610,7 +613,7 @@ async function testHttp() {
     bare.fields = {
       ...bare.fields,
       customfield_10234: { value: 'Brasil' },
-      customfield_10999: { value: 'BOGO', child: { value: 'Creation' } }
+      issuetype: { id: '10001', name: 'Service Request', description: 'Creation', subtask: false }
     };
     return {
       ok: true,
@@ -647,11 +650,12 @@ async function testHttp() {
     assert.equal(calls[1].headers.Authorization, `Bearer ${token}`);
     assert.equal(String(calls[1].url), 'http://jira.example/jira/rest/api/2/search');
     assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_10234'));
-    assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_10999'));
-    assert.equal(data.issues[0].payload.statusChanges[0].promotion, 'BOGO');
-    assert.equal(data.issues[0].configurationType.value, 'BOGO');
-    assert.equal(data.issues[0].configurationType.child.value, 'Creation');
-    assert.equal(data.issues[0].payload.fields.configurationType.value, 'BOGO');
+    assert.ok(JSON.parse(calls[1].body).fields.includes('issuetype'));
+    assert.equal(JSON.parse(calls[1].body).fields.includes('customfield_10999'), false);
+    assert.equal(data.issues[0].payload.statusChanges[0].promotion, 'Service Request');
+    assert.equal(data.issues[0].issueType.name, 'Service Request');
+    assert.equal(data.issues[0].payload.fields.issueType.description, 'Creation');
+    assert.equal(data.issues[0].payload.fields.issueType.name, 'Service Request');
     assert.equal(JSON.stringify(data).includes(token), false);
     assert.equal(calls[2].method, 'GET');
     assert.match(String(calls[2].url), /\/rest\/api\/2\/issue\/LC-7\?expand=changelog$/);
