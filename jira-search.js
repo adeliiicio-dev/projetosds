@@ -4,7 +4,7 @@ const JIRA_PAGE_SIZE = 50;
 const JIRA_MAX_ISSUES = 1000;
 const JIRA_FIELDS = ['summary', 'status', 'assignee', 'updated'];
 const COE_SUBSIDIARIES_NAME = 'COE_subsidiaries';
-const CONFIGURATION_TYPE_NAME = 'Configuration Type';
+const PROMOTION_FIELD_ID = 'customfield_25803';
 const JIRA_TZ = 'America/Sao_Paulo';
 
 function fail(status, message) {
@@ -365,10 +365,6 @@ function subsidiaryFieldId(payload) {
   return fieldIdByName(payload, COE_SUBSIDIARIES_NAME);
 }
 
-function configurationTypeFieldId(payload) {
-  return fieldIdByName(payload, CONFIGURATION_TYPE_NAME);
-}
-
 function stripSecrets(value, token) {
   const secret = String(token || '');
   const clean = text => {
@@ -391,39 +387,14 @@ function stripSecrets(value, token) {
   return walk(value);
 }
 
-function configurationFieldEmpty(value) {
-  if (value == null) return true;
-  if (typeof value === 'string') return value.trim() === '';
-  if (typeof value === 'number' || typeof value === 'boolean') return false;
-  if (Array.isArray(value)) return !value.length || value.every(configurationFieldEmpty);
-  if (typeof value === 'object') {
-    const keys = Object.keys(value).filter(key => key !== 'self' && key !== 'id' && key !== 'disabled');
-    return !keys.length || keys.every(key => configurationFieldEmpty(value[key]));
+function promotionValue(field) {
+  if (field == null || field === '') return '';
+  if (typeof field === 'string' || typeof field === 'number' || typeof field === 'boolean') {
+    return String(field).replace(/\s+/g, ' ').trim();
   }
-  return true;
-}
-
-function configurationText(value) {
-  return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
-}
-
-function firstConfigurationType(value) {
-  if (value == null || value === '') return '';
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (typeof value === 'string') {
-    const text = configurationText(value);
-    const parent = text.match(/^Parent values:\s*(.+?)(?:\(\s*\d+\s*\))?(?=\s*(?:Level\s+\d+\s+values|Child values)\s*:|$)/i);
-    if (parent && /Parent values:/i.test(text)) return configurationText(parent[1]);
-    return text;
-  }
-  if (Array.isArray(value)) return value.length ? firstConfigurationType(value[0]) : '';
-  if (typeof value === 'object') {
-    const key = ['value', 'name', 'label'].find(name => (
-      Object.prototype.hasOwnProperty.call(value, name) && !configurationFieldEmpty(value[name])
-    ));
-    return key ? firstConfigurationType(value[key]) : '';
-  }
-  return '';
+  if (typeof field !== 'object' || Array.isArray(field)) return '';
+  if (!Object.prototype.hasOwnProperty.call(field, 'value') || field.value == null || field.value === '') return '';
+  return promotionValue(field.value);
 }
 
 function readConfigurationRaw(fields, fieldId) {
@@ -435,11 +406,9 @@ function promotionName(change, row) {
   const holder = change && Object.prototype.hasOwnProperty.call(change, 'configurationType')
     ? change
     : (row && Object.prototype.hasOwnProperty.call(row, 'configurationType') ? row : null);
-  if (holder) {
-    if (configurationFieldEmpty(holder.configurationType)) return '(vazio)';
-    return firstConfigurationType(holder.configurationType) || '(missing first value)';
-  }
-  return firstConfigurationType(change && change.promotion != null ? change.promotion : (row && row.promotion)) || '(vazio)';
+  if (holder) return promotionValue(holder.configurationType) || '(vazio)';
+  const stored = change && change.promotion != null ? change.promotion : (row && row.promotion);
+  return promotionValue(stored) || '(vazio)';
 }
 
 function subsidiaryIncludes(value, name) {
@@ -603,10 +572,10 @@ function countMoves(rows) {
   return { all: todo + clarification, todo, clarification };
 }
 
-function toRow(issue, windows, user, fieldId, configurationTypeField, token) {
+function toRow(issue, windows, user, fieldId, token) {
   const fields = issue && issue.fields ? issue.fields : {};
-  const configurationType = stripSecrets(readConfigurationRaw(fields, configurationTypeField), token);
-  const promotion = configurationFieldEmpty(configurationType) ? '' : firstConfigurationType(configurationType);
+  const configurationType = stripSecrets(readConfigurationRaw(fields, PROMOTION_FIELD_ID), token);
+  const promotion = promotionValue(configurationType);
   const history = statusHistory(issue).map(move => {
     const parts = move.at ? qualifyingParts(move.at, windows) : null;
     return {
@@ -666,7 +635,7 @@ function buildRows(issues, filters) {
   const rows = [];
   let dropped = 0;
   issues.forEach(issue => {
-    const row = toRow(issue, windows, filters.user, filters.subsidiaryField, filters.configurationTypeField, filters.token);
+    const row = toRow(issue, windows, filters.user, filters.subsidiaryField, filters.token);
     if (!row.inWindow) {
       dropped += 1;
       return;
@@ -730,12 +699,10 @@ const jiraSearchApi = {
   JIRA_FIELDS,
   JIRA_TZ,
   COE_SUBSIDIARIES_NAME,
-  CONFIGURATION_TYPE_NAME,
+  PROMOTION_FIELD_ID,
   fieldIdByName,
   subsidiaryFieldId,
-  configurationTypeFieldId,
-  configurationFieldEmpty,
-  firstConfigurationType,
+  promotionValue,
   stripSecrets,
   promotionCounts,
   hourBands,

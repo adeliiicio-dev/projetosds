@@ -325,25 +325,13 @@ async function testWindowsAndMoves() {
     { id: 'customfield_10001', name: 'Other' },
     { id: 'customfield_10234', name: 'COE_subsidiaries' }
   ]), 'customfield_10234');
-  assert.equal(jira.configurationTypeFieldId([
-    { id: 'issuetype', name: 'Issue Type' },
-    { id: 'customfield_10999', name: 'Configuration types-ES2:' },
-    { id: 'not-a-field', name: 'Configuration Type:' },
-    { id: 'customfield_10888', name: 'Configuration Type:' }
-  ]), 'customfield_10888');
-  assert.equal(jira.configurationTypeFieldId([{ id: 'issuetype', name: 'Issue Type' }]), '');
-  assert.equal(jira.firstConfigurationType({ id: '10001', name: 'Service Request', description: 'longer text', subtask: false }), 'Service Request');
-  assert.equal(jira.firstConfigurationType({ value: 'BOGO', child: { value: 'Creation' } }), 'BOGO');
-  assert.equal(jira.firstConfigurationType({ value: '', child: { value: 'Creation' } }), '');
-  assert.equal(jira.configurationFieldEmpty({ value: '', child: { value: 'Creation' } }), false);
-  assert.equal(jira.firstConfigurationType({ value: 'Add On - Modify Dates (Start/End)', child: { value: 'ignored' } }), 'Add On - Modify Dates (Start/End)');
-  assert.equal(jira.firstConfigurationType({ value: null, label: 'Rewards Boost - Extra', child: { value: 'Publish' } }), 'Rewards Boost - Extra');
-  assert.equal(jira.firstConfigurationType('SC+ - Promotion'), 'SC+ - Promotion');
-  assert.equal(jira.firstConfigurationType('Parent values: BOGO(12345)Level 1 values: Creation(67890)'), 'BOGO');
-  assert.equal(jira.firstConfigurationType(['Payment Method', 'Creation']), 'Payment Method');
-  assert.equal(jira.firstConfigurationType(null), '');
-  assert.equal(jira.configurationFieldEmpty(null), true);
-  assert.equal(jira.configurationFieldEmpty(''), true);
+  assert.equal(jira.PROMOTION_FIELD_ID, 'customfield_25803');
+  assert.equal(jira.promotionValue({ value: 'BOGO', child: { value: 'Creation' } }), 'BOGO');
+  assert.equal(jira.promotionValue({ value: '', child: { value: 'Creation' } }), '');
+  assert.equal(jira.promotionValue({ value: 'Add On - Modify Dates (Start/End)', child: { value: 'ignored' } }), 'Add On - Modify Dates (Start/End)');
+  assert.equal(jira.promotionValue({ value: null, label: 'Rewards Boost - Extra', child: { value: 'Publish' } }), '');
+  assert.equal(jira.promotionValue('SC+ - Promotion'), 'SC+ - Promotion');
+  assert.equal(jira.promotionValue(null), '');
   const secret = 'local-test-token';
   const hidden = jira.stripSecrets({ value: `BOGO ${secret}`, child: { value: 'Bearer abc.def.ghi' } }, secret);
   assert.equal(JSON.stringify(hidden).includes(secret), false);
@@ -358,11 +346,10 @@ async function testWindowsAndMoves() {
     summary: 'Brasil'
   });
   owned.fields.customfield_10234 = { value: 'Brasil' };
-  owned.fields.customfield_10888 = { value: 'Rewards Boost', child: { value: 'Publish' } };
+  owned.fields.customfield_25803 = { value: 'Rewards Boost', child: { value: 'Publish' } };
   const withSub = jira.buildRows([owned], {
     ...FILTERS,
-    subsidiaryField: 'customfield_10234',
-    configurationTypeField: 'customfield_10888'
+    subsidiaryField: 'customfield_10234'
   });
   assert.equal(withSub.rows[0].subsidiary, 'Brasil');
   assert.equal(withSub.rows[0].payload.statusChanges[0].subsidiary, 'Brasil');
@@ -448,8 +435,7 @@ async function testWindowsAndMoves() {
     }
   }];
   assert.deepEqual(jira.promotionCounts(fromField, '', 'Ada'), [
-    { label: '(missing first value)', value: 1 },
-    { label: '(vazio)', value: 1 },
+    { label: '(vazio)', value: 2 },
     { label: 'Add On - Modify Dates (Start/End)', value: 1 }
   ]);
 
@@ -585,8 +571,7 @@ async function testHttp() {
           { id: 'customfield_10001', name: 'Other' },
           { id: 'customfield_10234', name: 'COE_subsidiaries' },
           { id: 'customfield_10999', name: 'Configuration types-ES2:' },
-          { id: 'issuetype', name: 'Issue Type' },
-          { id: 'customfield_10888', name: 'Configuration Type:' }
+          { id: 'issuetype', name: 'Issue Type' }
         ])
       };
     }
@@ -615,7 +600,7 @@ async function testHttp() {
     bare.fields = {
       ...bare.fields,
       customfield_10234: { value: 'Brasil' },
-      customfield_10888: { value: 'Service Request', child: { value: 'Creation' } }
+      customfield_25803: { value: 'Service Request', child: { value: 'Creation' } }
     };
     return {
       ok: true,
@@ -652,7 +637,7 @@ async function testHttp() {
     assert.equal(calls[1].headers.Authorization, `Bearer ${token}`);
     assert.equal(String(calls[1].url), 'http://jira.example/jira/rest/api/2/search');
     assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_10234'));
-    assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_10888'));
+    assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_25803'));
     assert.equal(JSON.parse(calls[1].body).fields.includes('issuetype'), false);
     assert.equal(JSON.parse(calls[1].body).fields.includes('customfield_10999'), false);
     assert.equal(data.issues[0].payload.statusChanges[0].promotion, 'Service Request');

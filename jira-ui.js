@@ -433,11 +433,11 @@ function jrConfigurationPayload(name) {
     if (seen.has(key)) return;
     seen.add(key);
     const raw = Object.prototype.hasOwnProperty.call(row, 'configurationType') ? row.configurationType : null;
-    items.push({ key, 'Configuration Type': raw });
+    items.push({ key, customfield_25803: raw });
   });
   const shown = typeof jiraSearch !== 'undefined' && jiraSearch.stripSecrets ? jiraSearch.stripSecrets(items, '') : items;
   return `<details class="mt-2" open>
-    <summary>Payload Configuration Type</summary>
+    <summary>Payload customfield_25803</summary>
     <pre class="jr-payload">${jrEsc(JSON.stringify(shown, null, 2))}</pre>
   </details>`;
 }
@@ -685,7 +685,7 @@ function jrRenderResults() {
   const noun = selected === 1 ? 'mudança' : 'mudanças';
   meta.innerHTML = `<p class="muted mb-2">${selected} ${noun} neste filtro.</p>${notes.map(note => `<p class="muted mb-2">${jrEsc(note)}</p>`).join('')}`;
   table.innerHTML = visible.length ? `<div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
-      <thead><tr><th>Key</th><th>Summary</th><th>Movimento</th><th>Configuration Type</th></tr></thead>
+      <thead><tr><th>Key</th><th>Summary</th><th>Movimento</th><th>customfield_25803</th></tr></thead>
       <tbody>${visible.map(row => `<tr>
         <td>${jrKeyCell(row)}</td>
         <td class="jr-summary" title="${jrEsc(row.summary)}">${jrEsc(row.summary || '—')}</td>

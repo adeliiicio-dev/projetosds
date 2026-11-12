@@ -563,8 +563,7 @@ async function runSearch(input, fetchImpl = global.fetch, filePath = METRICS_FIL
   const config = jiraConfig();
   const catalog = await loadFieldCatalog(config, fetchImpl);
   const subsidiaryField = jira.subsidiaryFieldId(catalog);
-  const configurationTypeField = jira.configurationTypeFieldId(catalog);
-  const extraFields = [...new Set([subsidiaryField, configurationTypeField].filter(Boolean))];
+  const extraFields = [...new Set([subsidiaryField, jira.PROMOTION_FIELD_ID].filter(Boolean))];
   const fields = jira.JIRA_FIELDS.concat(extraFields);
   const jql = jira.buildSearchJql(pendingFilters);
   const collected = await jira.collectIssues(body => jiraPost(config, body, fetchImpl), jql, fields);
@@ -574,7 +573,6 @@ async function runSearch(input, fetchImpl = global.fetch, filePath = METRICS_FIL
   const built = jira.buildRows(collected.issues, {
     ...pendingFilters,
     subsidiaryField,
-    configurationTypeField,
     token: config.token
   });
   return {
