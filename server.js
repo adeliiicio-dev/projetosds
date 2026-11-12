@@ -509,7 +509,12 @@ async function runSearch(input, fetchImpl = global.fetch, filePath = METRICS_FIL
   for (const issue of collected.issues) {
     issue.changelog = { histories: await loadChangelog(config, issue.key, fetchImpl) };
   }
-  const built = jira.buildRows(collected.issues, { ...pendingFilters, subsidiaryField, configurationField });
+  const built = jira.buildRows(collected.issues, {
+    ...pendingFilters,
+    subsidiaryField,
+    configurationField,
+    token: config.token
+  });
   return {
     jql,
     total: built.rows.length,

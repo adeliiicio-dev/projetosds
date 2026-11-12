@@ -333,10 +333,20 @@ async function testWindowsAndMoves() {
   assert.equal(jira.configurationFieldId([{ id: 'customfield_10001', name: 'Other' }]), '');
   assert.equal(jira.firstConfigurationType({ value: 'BOGO', child: { value: 'Creation' } }), 'BOGO');
   assert.equal(jira.firstConfigurationType({ value: '', child: { value: 'Creation' } }), '');
-  assert.equal(jira.firstConfigurationType({ value: 'Add On - Modify Dates (Start/End)', child: { value: 'ignored' } }), 'Add On');
-  assert.equal(jira.firstConfigurationType('SC+ - Promotion'), 'SC+');
+  assert.equal(jira.configurationFieldEmpty({ value: '', child: { value: 'Creation' } }), false);
+  assert.equal(jira.firstConfigurationType({ value: 'Add On - Modify Dates (Start/End)', child: { value: 'ignored' } }), 'Add On - Modify Dates (Start/End)');
+  assert.equal(jira.firstConfigurationType({ value: null, label: 'Rewards Boost - Extra', child: { value: 'Publish' } }), 'Rewards Boost - Extra');
+  assert.equal(jira.firstConfigurationType('SC+ - Promotion'), 'SC+ - Promotion');
+  assert.equal(jira.firstConfigurationType('Parent values: BOGO(12345)Level 1 values: Creation(67890)'), 'BOGO');
   assert.equal(jira.firstConfigurationType(['Payment Method', 'Creation']), 'Payment Method');
   assert.equal(jira.firstConfigurationType(null), '');
+  assert.equal(jira.configurationFieldEmpty(null), true);
+  assert.equal(jira.configurationFieldEmpty(''), true);
+  const secret = 'local-test-token';
+  const hidden = jira.stripSecrets({ value: `BOGO ${secret}`, child: { value: 'Bearer abc.def.ghi' } }, secret);
+  assert.equal(JSON.stringify(hidden).includes(secret), false);
+  assert.equal(hidden.value, 'BOGO …');
+  assert.equal(hidden.child.value, 'Bearer …');
 
   const owned = issue('LC-70', {
     from: 'Request',
@@ -356,7 +366,9 @@ async function testWindowsAndMoves() {
   assert.equal(withSub.rows[0].payload.statusChanges[0].subsidiary, 'Brasil');
   assert.equal(withSub.rows[0].promotion, 'Rewards Boost');
   assert.equal(withSub.rows[0].payload.statusChanges[0].promotion, 'Rewards Boost');
-  assert.equal(JSON.stringify(withSub.rows[0].payload).includes('Publish'), false);
+  assert.equal(withSub.rows[0].configurationType.value, 'Rewards Boost');
+  assert.equal(withSub.rows[0].configurationType.child.value, 'Publish');
+  assert.equal(withSub.rows[0].payload.fields.configurationType.child.value, 'Publish');
   const subMetrics = jira.metricsForRows(withSub.rows, 'Ada', 'all', RANGE_18_19);
   assert.equal(subMetrics.subsidiaries[0].name, 'Brasil');
   assert.equal(subMetrics.subsidiaries[0].days[1], 1);
@@ -391,17 +403,52 @@ async function testWindowsAndMoves() {
   assert.deepEqual(jira.promotionCounts(typed, '', 'Ada'), [
     { label: 'BOGO', value: 2 },
     { label: '(vazio)', value: 1 },
-    { label: 'Add On', value: 1 },
+    { label: 'Add On - Creation', value: 1 },
     { label: 'Payment Method', value: 1 }
   ]);
   assert.deepEqual(jira.promotionCounts(typed, 'Chile', 'Ada'), [
     { label: 'BOGO', value: 2 },
     { label: '(vazio)', value: 1 },
-    { label: 'Add On', value: 1 }
+    { label: 'Add On - Creation', value: 1 }
   ]);
-  assert.deepEqual(jira.promotionCounts(typed, 'Peru', 'Ada'), [{ label: 'Add On', value: 1 }]);
+  assert.deepEqual(jira.promotionCounts(typed, 'Peru', 'Ada'), [{ label: 'Add On - Creation', value: 1 }]);
   assert.deepEqual(jira.promotionCounts(typed, 'Mexico', 'Ada'), [{ label: 'Payment Method', value: 1 }]);
   assert.deepEqual(jira.promotionCounts(typed, 'Colombia', 'Ada'), []);
+  const fromField = [{
+    subsidiary: 'Chile',
+    configurationType: { value: 'Add On - Modify Dates (Start/End)', child: { value: 'Creation' } },
+    payload: {
+      statusChanges: [{
+        kind: 'todo',
+        subsidiary: 'Chile',
+        author: 'Ada',
+        promotion: 'Add On',
+        configurationType: { value: 'Add On - Modify Dates (Start/End)', child: { value: 'Creation' } }
+      }]
+    }
+  }, {
+    subsidiary: 'Mexico',
+    configurationType: null,
+    payload: {
+      statusChanges: [{ kind: 'todo', subsidiary: 'Mexico', author: 'Ada', promotion: 'ignored', configurationType: null }]
+    }
+  }, {
+    subsidiary: 'Peru',
+    configurationType: { value: '', child: { value: 'Creation' } },
+    payload: {
+      statusChanges: [{
+        kind: 'todo',
+        subsidiary: 'Peru',
+        author: 'Ada',
+        configurationType: { value: '', child: { value: 'Creation' } }
+      }]
+    }
+  }];
+  assert.deepEqual(jira.promotionCounts(fromField, '', 'Ada'), [
+    { label: '(missing first value)', value: 1 },
+    { label: '(vazio)', value: 1 },
+    { label: 'Add On - Modify Dates (Start/End)', value: 1 }
+  ]);
 
   const later = jira.metricsForRows([{
     key: 'LC-80',
@@ -602,7 +649,10 @@ async function testHttp() {
     assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_10234'));
     assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_10999'));
     assert.equal(data.issues[0].payload.statusChanges[0].promotion, 'BOGO');
-    assert.equal(JSON.stringify(data.issues[0].payload).includes('Creation'), false);
+    assert.equal(data.issues[0].configurationType.value, 'BOGO');
+    assert.equal(data.issues[0].configurationType.child.value, 'Creation');
+    assert.equal(data.issues[0].payload.fields.configurationType.value, 'BOGO');
+    assert.equal(JSON.stringify(data).includes(token), false);
     assert.equal(calls[2].method, 'GET');
     assert.match(String(calls[2].url), /\/rest\/api\/2\/issue\/LC-7\?expand=changelog$/);
     assert.equal(String(calls[1].url).includes('/changelog'), false);

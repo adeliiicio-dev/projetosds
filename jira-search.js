@@ -369,22 +369,77 @@ function configurationFieldId(payload) {
   return fieldIdByName(payload, CONFIGURATION_TYPES_NAME);
 }
 
-function firstConfigurationType(value) {
-  if (value == null || value === '') return '';
-  if (Array.isArray(value)) return value.length ? firstConfigurationType(value[0]) : '';
-  if (typeof value === 'object') {
-    if (Object.prototype.hasOwnProperty.call(value, 'value')) return firstConfigurationType(value.value);
-    if (Object.prototype.hasOwnProperty.call(value, 'name')) return firstConfigurationType(value.name);
-    return '';
-  }
-  const text = String(value).replace(/\s+/g, ' ').trim();
-  if (!text) return '';
-  return text.split(/\s[-–—]\s/)[0].trim();
+function stripSecrets(value, token) {
+  const secret = String(token || '');
+  const clean = text => {
+    let out = String(text);
+    if (secret.length >= 8) out = out.split(secret).join('…');
+    out = out.replace(/Bearer\s+\S+/gi, 'Bearer …');
+    out = out.replace(/([?&](?:access_token|token|api_token|bearer)=)[^&\s]+/gi, '$1…');
+    return out;
+  };
+  const walk = item => {
+    if (typeof item === 'string') return clean(item);
+    if (Array.isArray(item)) return item.map(walk);
+    if (item && typeof item === 'object') {
+      const out = {};
+      Object.keys(item).forEach(key => { out[key] = walk(item[key]); });
+      return out;
+    }
+    return item;
+  };
+  return walk(value);
 }
 
-function readConfigurationType(fields, fieldId) {
-  if (!fields || !fieldId || !Object.prototype.hasOwnProperty.call(fields, fieldId)) return '';
-  return firstConfigurationType(fields[fieldId]);
+function configurationFieldEmpty(value) {
+  if (value == null) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  if (typeof value === 'number' || typeof value === 'boolean') return false;
+  if (Array.isArray(value)) return !value.length || value.every(configurationFieldEmpty);
+  if (typeof value === 'object') {
+    const keys = Object.keys(value).filter(key => key !== 'self' && key !== 'id' && key !== 'disabled');
+    return !keys.length || keys.every(key => configurationFieldEmpty(value[key]));
+  }
+  return true;
+}
+
+function configurationText(value) {
+  return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+}
+
+function firstConfigurationType(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'string') {
+    const text = configurationText(value);
+    const parent = text.match(/^Parent values:\s*(.+?)(?:\(\s*\d+\s*\))?(?=\s*(?:Level\s+\d+\s+values|Child values)\s*:|$)/i);
+    if (parent && /Parent values:/i.test(text)) return configurationText(parent[1]);
+    return text;
+  }
+  if (Array.isArray(value)) return value.length ? firstConfigurationType(value[0]) : '';
+  if (typeof value === 'object') {
+    const key = ['value', 'name', 'label'].find(name => (
+      Object.prototype.hasOwnProperty.call(value, name) && !configurationFieldEmpty(value[name])
+    ));
+    return key ? firstConfigurationType(value[key]) : '';
+  }
+  return '';
+}
+
+function readConfigurationRaw(fields, fieldId) {
+  if (!fields || !fieldId || !Object.prototype.hasOwnProperty.call(fields, fieldId)) return null;
+  return fields[fieldId] == null ? null : fields[fieldId];
+}
+
+function promotionName(change, row) {
+  const holder = change && Object.prototype.hasOwnProperty.call(change, 'configurationType')
+    ? change
+    : (row && Object.prototype.hasOwnProperty.call(row, 'configurationType') ? row : null);
+  if (holder) {
+    if (configurationFieldEmpty(holder.configurationType)) return '(vazio)';
+    return firstConfigurationType(holder.configurationType) || '(missing first value)';
+  }
+  return firstConfigurationType(change && change.promotion != null ? change.promotion : (row && row.promotion)) || '(vazio)';
 }
 
 function subsidiaryIncludes(value, name) {
@@ -406,7 +461,7 @@ function promotionCounts(rows, subsidiaryName, user) {
         ? change.subsidiary
         : (row && row.subsidiary);
       if (!subsidiaryIncludes(subsidiary, subsidiaryName)) return;
-      const label = firstConfigurationType(change && change.promotion != null ? change.promotion : (row && row.promotion));
+      const label = promotionName(change, row);
       counts.set(label, (counts.get(label) || 0) + 1);
     });
   });
@@ -548,9 +603,10 @@ function countMoves(rows) {
   return { all: todo + clarification, todo, clarification };
 }
 
-function toRow(issue, windows, user, fieldId, configurationField) {
+function toRow(issue, windows, user, fieldId, configurationField, token) {
   const fields = issue && issue.fields ? issue.fields : {};
-  const promotion = readConfigurationType(fields, configurationField);
+  const configurationType = stripSecrets(readConfigurationRaw(fields, configurationField), token);
+  const promotion = configurationFieldEmpty(configurationType) ? '' : firstConfigurationType(configurationType);
   const history = statusHistory(issue).map(move => {
     const parts = move.at ? qualifyingParts(move.at, windows) : null;
     return {
@@ -575,6 +631,7 @@ function toRow(issue, windows, user, fieldId, configurationField) {
     moveText: shown.map(oneMove).join('\n'),
     subsidiary,
     promotion,
+    configurationType,
     corrected,
     kinds,
     inWindow: statusMoves.length > 0,
@@ -584,7 +641,8 @@ function toRow(issue, windows, user, fieldId, configurationField) {
         summary: fields.summary ?? null,
         status: fields.status ?? null,
         assignee: fields.assignee ?? null,
-        updated: fields.updated ?? null
+        updated: fields.updated ?? null,
+        configurationType
       },
       statusChanges: statusMoves.map(move => ({
         from: move.from,
@@ -595,6 +653,7 @@ function toRow(issue, windows, user, fieldId, configurationField) {
         author: authorNames(move.author).join(' '),
         subsidiary,
         promotion,
+        configurationType,
         kind: move.kind,
         text: oneMove(move)
       }))
@@ -607,7 +666,7 @@ function buildRows(issues, filters) {
   const rows = [];
   let dropped = 0;
   issues.forEach(issue => {
-    const row = toRow(issue, windows, filters.user, filters.subsidiaryField, filters.configurationField);
+    const row = toRow(issue, windows, filters.user, filters.subsidiaryField, filters.configurationField, filters.token);
     if (!row.inWindow) {
       dropped += 1;
       return;
@@ -675,7 +734,9 @@ const jiraSearchApi = {
   fieldIdByName,
   subsidiaryFieldId,
   configurationFieldId,
+  configurationFieldEmpty,
   firstConfigurationType,
+  stripSecrets,
   promotionCounts,
   hourBands,
   metricLeaders,
