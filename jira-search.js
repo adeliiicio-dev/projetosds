@@ -2,7 +2,7 @@
 
 const JIRA_PAGE_SIZE = 50;
 const JIRA_MAX_ISSUES = 1000;
-const JIRA_FIELDS = ['summary', 'status', 'assignee', 'updated'];
+const JIRA_FIELDS = ['summary', 'status', 'assignee', 'updated', 'issuetype'];
 const COE_SUBSIDIARIES_NAME = 'COE_subsidiaries';
 const PROMOTION_FIELD_ID = 'customfield_25803';
 const JIRA_TZ = 'America/Sao_Paulo';
@@ -402,13 +402,30 @@ function readConfigurationRaw(fields, fieldId) {
   return fields[fieldId] == null ? null : fields[fieldId];
 }
 
+function issueTypeName(issuetype) {
+  if (!issuetype || typeof issuetype !== 'object' || Array.isArray(issuetype)) return '';
+  const name = issuetype.name;
+  if (typeof name !== 'string' && typeof name !== 'number' && typeof name !== 'boolean') return '';
+  return String(name).replace(/\s+/g, ' ').trim();
+}
+
+function storedIssueType(source) {
+  if (!source || !Object.prototype.hasOwnProperty.call(source, 'issueType')) return '';
+  const type = source.issueType;
+  if (typeof type !== 'string' && typeof type !== 'number' && typeof type !== 'boolean') return '';
+  return String(type).replace(/\s+/g, ' ').trim();
+}
+
 function promotionName(change, row) {
   const holder = change && Object.prototype.hasOwnProperty.call(change, 'configurationType')
     ? change
     : (row && Object.prototype.hasOwnProperty.call(row, 'configurationType') ? row : null);
-  if (holder) return promotionValue(holder.configurationType) || '(vazio)';
+  const parent = holder ? promotionValue(holder.configurationType) : '';
+  if (parent) return parent;
+  const typeName = storedIssueType(change) || storedIssueType(row);
+  if (holder) return typeName || '(vazio)';
   const stored = change && change.promotion != null ? change.promotion : (row && row.promotion);
-  return promotionValue(stored) || '(vazio)';
+  return promotionValue(stored) || typeName || '(vazio)';
 }
 
 function subsidiaryIncludes(value, name) {
@@ -575,7 +592,8 @@ function countMoves(rows) {
 function toRow(issue, windows, user, fieldId, token) {
   const fields = issue && issue.fields ? issue.fields : {};
   const configurationType = stripSecrets(readConfigurationRaw(fields, PROMOTION_FIELD_ID), token);
-  const promotion = promotionValue(configurationType);
+  const issueType = issueTypeName(fields.issuetype ? stripSecrets(fields.issuetype, token) : null);
+  const promotion = promotionValue(configurationType) || issueType;
   const history = statusHistory(issue).map(move => {
     const parts = move.at ? qualifyingParts(move.at, windows) : null;
     return {
@@ -601,6 +619,7 @@ function toRow(issue, windows, user, fieldId, token) {
     subsidiary,
     promotion,
     configurationType,
+    issueType,
     corrected,
     kinds,
     inWindow: statusMoves.length > 0,
@@ -623,6 +642,7 @@ function toRow(issue, windows, user, fieldId, token) {
         subsidiary,
         promotion,
         configurationType,
+        issueType,
         kind: move.kind,
         text: oneMove(move)
       }))
@@ -703,6 +723,7 @@ const jiraSearchApi = {
   fieldIdByName,
   subsidiaryFieldId,
   promotionValue,
+  issueTypeName,
   stripSecrets,
   promotionCounts,
   hourBands,

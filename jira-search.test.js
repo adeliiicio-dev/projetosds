@@ -49,7 +49,7 @@ async function testJql() {
   assert.ok(jql.includes('2026/11/10 18:59'));
   assert.ok(jql.includes('2026/11/11 18:00'));
   assert.ok(jql.indexOf('2026/11/10') < jql.indexOf('2026/11/11'));
-  assert.equal(jira.JIRA_FIELDS.join(','), 'summary,status,assignee,updated');
+  assert.equal(jira.JIRA_FIELDS.join(','), 'summary,status,assignee,updated,issuetype');
   assert.throws(() => jira.assertSearchInput({ user: 'Ada', timeFrom: '19:00', timeTo: '18:00', days: ['2026-11-10'] }), /depois do inicial/);
   assert.throws(() => jira.assertSearchInput({ user: 'Ada\nSilva', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] }), /inválido/);
 }
@@ -355,6 +355,37 @@ async function testWindowsAndMoves() {
   assert.equal(withSub.rows[0].payload.statusChanges[0].subsidiary, 'Brasil');
   assert.equal(withSub.rows[0].promotion, 'Rewards Boost');
   assert.equal(withSub.rows[0].payload.statusChanges[0].promotion, 'Rewards Boost');
+  owned.fields.issuetype = { name: 'Bug' };
+  owned.fields.issuelinks = [{ outwardIssue: { fields: { issuetype: { name: 'Epic' } } } }];
+  const keptParent = jira.buildRows([owned], { ...FILTERS, subsidiaryField: 'customfield_10234' });
+  assert.equal(keptParent.rows[0].promotion, 'Rewards Boost');
+  assert.equal(keptParent.rows[0].issueType, 'Bug');
+  const emptyType = issue('LC-71', {
+    from: 'Request',
+    to: 'To do',
+    at: '2026-11-10T18:20:00.000-0300',
+    updated: '2026-11-10T18:20:00.000-0300',
+    summary: 'Sem valor'
+  });
+  emptyType.fields.customfield_25803 = { value: '', child: { value: 'Creation' } };
+  emptyType.fields.issuetype = { name: 'Service Request' };
+  emptyType.fields.issuelinks = [{ inwardIssue: { fields: { issuetype: { name: 'Epic' } } } }];
+  const fellBack = jira.buildRows([emptyType], FILTERS);
+  assert.equal(fellBack.rows[0].promotion, 'Service Request');
+  assert.equal(fellBack.rows[0].issueType, 'Service Request');
+  assert.equal(fellBack.rows[0].payload.statusChanges[0].issueType, 'Service Request');
+  assert.equal(JSON.stringify(fellBack).includes('Epic'), false);
+  const missingType = issue('LC-72', {
+    from: 'Request',
+    to: 'Clarification',
+    at: '2026-11-10T18:25:00.000-0300',
+    updated: '2026-11-10T18:25:00.000-0300',
+    summary: 'Sem campo'
+  });
+  missingType.fields.issuelinks = [{ type: { name: 'Blocks' }, outwardIssue: { fields: { issuetype: { name: 'Story' } } } }];
+  const noType = jira.buildRows([missingType], FILTERS);
+  assert.equal(noType.rows[0].promotion, '');
+  assert.equal(noType.rows[0].issueType, '');
   assert.equal(withSub.rows[0].configurationType.value, 'Rewards Boost');
   assert.equal(withSub.rows[0].configurationType.child.value, 'Publish');
   assert.equal(withSub.rows[0].payload.fields.configurationType.value, 'Rewards Boost');
@@ -437,6 +468,52 @@ async function testWindowsAndMoves() {
   assert.deepEqual(jira.promotionCounts(fromField, '', 'Ada'), [
     { label: '(vazio)', value: 2 },
     { label: 'Add On - Modify Dates (Start/End)', value: 1 }
+  ]);
+  const withIssueType = [{
+    subsidiary: 'Chile',
+    issueType: 'Service Request',
+    configurationType: { value: 'BOGO', child: { value: 'Creation' } },
+    payload: {
+      statusChanges: [{
+        kind: 'todo',
+        subsidiary: 'Chile',
+        author: 'Ada',
+        issueType: 'Service Request',
+        configurationType: { value: 'BOGO', child: { value: 'Creation' } }
+      }]
+    }
+  }, {
+    subsidiary: 'Mexico',
+    issueType: 'Task',
+    configurationType: { value: '', child: { value: 'Creation' } },
+    payload: {
+      statusChanges: [{
+        kind: 'clarification',
+        subsidiary: 'Mexico',
+        author: 'Ada',
+        promotion: 'ignored',
+        issueType: 'Task',
+        configurationType: { value: '', child: { value: 'Creation' } }
+      }]
+    }
+  }, {
+    subsidiary: 'Peru',
+    issueType: 'Story',
+    configurationType: null,
+    payload: {
+      statusChanges: [{
+        kind: 'todo',
+        subsidiary: 'Peru',
+        author: 'Ada',
+        issueType: 'Story',
+        configurationType: null
+      }]
+    }
+  }];
+  assert.deepEqual(jira.promotionCounts(withIssueType, '', 'Ada'), [
+    { label: 'BOGO', value: 1 },
+    { label: 'Story', value: 1 },
+    { label: 'Task', value: 1 }
   ]);
 
   const later = jira.metricsForRows([{
@@ -638,7 +715,7 @@ async function testHttp() {
     assert.equal(String(calls[1].url), 'http://jira.example/jira/rest/api/2/search');
     assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_10234'));
     assert.ok(JSON.parse(calls[1].body).fields.includes('customfield_25803'));
-    assert.equal(JSON.parse(calls[1].body).fields.includes('issuetype'), false);
+    assert.ok(JSON.parse(calls[1].body).fields.includes('issuetype'));
     assert.equal(JSON.parse(calls[1].body).fields.includes('customfield_10999'), false);
     assert.equal(data.issues[0].payload.statusChanges[0].promotion, 'Service Request');
     assert.equal(data.issues[0].configurationType.value, 'Service Request');
