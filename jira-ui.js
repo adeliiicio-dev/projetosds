@@ -46,6 +46,7 @@ const jrState = {
   issues: [],
   info: null,
   transition: 'all',
+  hideWeekend: true,
   loading: false,
   error: '',
   savedDays: [],
@@ -244,19 +245,18 @@ function jrRenderMetrics() {
   const ownSaved = jrSavedForCurrent();
   if (jrState.period === 'saved') {
     const chosen = ownSaved.filter(day => jrState.picked.has(jrDayKey(day)));
-    const slices = chosen.map(day => (day.counts && (day.counts[jrState.transition] || day.counts.all)) || { weekdays: [], hours: [], tickets: 0 });
-    const allSlices = chosen.map(day => (day.counts && day.counts.all) || { weekdays: [], hours: [], tickets: 0 });
+    const slices = chosen.map(day => (day.counts && day.counts.all) || { weekdays: [], hours: [], tickets: 0 });
     metrics = jrSumSlices(slices);
-    summaryMetrics = jrSumSlices(allSlices);
+    summaryMetrics = metrics;
     source = chosen.length
       ? 'Números lidos do arquivo, só Request → To do e Request → Clarification dessa pessoa, sem nova consulta ao Jira.'
       : 'Escolha ao menos um dia salvo dessa pessoa.';
   } else {
-    metrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser(), jrState.transition, jrState.range);
-    summaryMetrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser(), 'all', jrState.range);
+    metrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser(), 'all', jrState.range);
+    summaryMetrics = metrics;
     const from = jrState.range ? jrState.range.timeFrom : '';
     const to = jrState.range ? jrState.range.timeTo : '';
-    source = `Números da consulta atual, no mesmo filtro da tabela, entre ${from} e ${to}.`;
+    source = `Números da consulta atual, Request → To do e Request → Clarification, entre ${from} e ${to}.`;
   }
   const noun = metrics.tickets === 1 ? 'mudança' : 'mudanças';
   const savedBoxes = ownSaved.map(day => {
@@ -418,28 +418,11 @@ function jrPromotionTable(name) {
   const items = typeof jiraSearch !== 'undefined' && jiraSearch.promotionCounts
     ? jiraSearch.promotionCounts(jrPromotionSource(), name, jrCurrentUser())
     : [];
-  return `<div class="mt-3">${jrCountTable('Type of promotion', items, 'Quantity')}${jrConfigurationPayload(name)}</div>`;
+  return `<div class="mt-3">${jrCountTable('Type of promotion', items, 'Quantity')}</div>`;
 }
 
-function jrConfigurationPayload(name) {
-  const seen = new Set();
-  const items = [];
-  jrPromotionSource().forEach(row => {
-    if (!jrSubMatch(row && row.subsidiary, name)) return;
-    const changes = row && row.payload && row.payload.statusChanges || [];
-    const counted = changes.some(change => change && (change.kind === 'todo' || change.kind === 'clarification'));
-    if (!counted) return;
-    const key = row.key || '';
-    if (seen.has(key)) return;
-    seen.add(key);
-    const raw = Object.prototype.hasOwnProperty.call(row, 'configurationType') ? row.configurationType : null;
-    items.push({ key, customfield_25803: raw });
-  });
-  const shown = typeof jiraSearch !== 'undefined' && jiraSearch.stripSecrets ? jiraSearch.stripSecrets(items, '') : items;
-  return `<details class="mt-2" open>
-    <summary>Payload customfield_25803</summary>
-    <pre class="jr-payload">${jrEsc(JSON.stringify(shown, null, 2))}</pre>
-  </details>`;
+function jrCountWord(count, one, many) {
+  return Number(count) === 1 ? one : many;
 }
 
 function jrTied(items) {
@@ -509,10 +492,10 @@ function jrLeadSentences() {
   const priority = jrTied(subs.map(row => ({ label: row.label, value: row.priority })));
   const range = jrRangeLabel(metrics.bands);
   return `<div class="mt-3">
-    <p class="mb-1">The subsidiary with the most tickets in the period ${jrEsc(range)} was ${jrEsc(subsidiary.names)} with ${subsidiary.value}.</p>
-    <p class="mb-1">The period with the most tickets is ${jrEsc(band.names)} with ${band.value}.</p>
+    <p class="mb-1">The subsidiary with the most tickets in the period ${jrEsc(range)} was ${jrEsc(subsidiary.names)} with ${subsidiary.value} ${jrCountWord(subsidiary.value, 'ticket', 'tickets')}.</p>
+    <p class="mb-1">The period with the most tickets is ${jrEsc(band.names)} with ${band.value} ${jrCountWord(band.value, 'ticket', 'tickets')}.</p>
     <p class="mb-1">The weekday with the most tickets was ${jrEsc(weekday.names)}.</p>
-    <p class="mb-0">The subsidiary with the most priority requests in the night period (tickets from 18:00 onward) was ${jrEsc(priority.names)} with ${priority.value}.</p>
+    <p class="mb-0">The subsidiary with the most priority requests in the night period (tickets from 18:00 onward) was ${jrEsc(priority.names)} with ${priority.value} ${jrCountWord(priority.value, 'request', 'requests')}.</p>
   </div>`;
 }
 
@@ -579,14 +562,18 @@ function jrSubDays(slice, name) {
 
 function jrWeekdayTable(name) {
   const split = jrWeekdaySplit(name);
-  const body = JR_DAY_SHORT.map((label, index) => {
-    const todo = split.todo[index] || 0;
-    const clarification = split.clarification[index] || 0;
-    return `<tr><th>${jrEsc(label)}</th><td class="num">${todo}</td><td class="num">${clarification}</td><td class="num">${todo + clarification}</td></tr>`;
+  const hideWeekend = jrState.hideWeekend !== false;
+  const shown = JR_DAY_SHORT.map((label, index) => ({ label, index })).filter(day => !(hideWeekend && day.index >= 5));
+  const body = shown.map(day => {
+    const todo = split.todo[day.index] || 0;
+    const clarification = split.clarification[day.index] || 0;
+    return `<tr><th>${jrEsc(day.label)}</th><td class="num">${todo}</td><td class="num">${clarification}</td><td class="num">${todo + clarification}</td></tr>`;
   }).join('');
-  const todoTotal = split.todo.reduce((sum, count) => sum + count, 0);
-  const clarTotal = split.clarification.reduce((sum, count) => sum + count, 0);
-  return `<div class="table-wrap rp-fit"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
+  const todoTotal = shown.reduce((sum, day) => sum + (split.todo[day.index] || 0), 0);
+  const clarTotal = shown.reduce((sum, day) => sum + (split.clarification[day.index] || 0), 0);
+  const checked = hideWeekend ? ' checked' : '';
+  return `<label class="rp-check mb-2"><input type="checkbox" data-jr-weekend${checked}> Ocultar fim de semana</label>
+  <div class="table-wrap rp-fit"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
     <thead><tr><th>Dia</th><th>To do</th><th>Clarification</th><th>Mudanças</th></tr></thead>
     <tbody>${body}</tbody>
     <tfoot><tr><th>Total</th><th class="num">${todoTotal}</th><th class="num">${clarTotal}</th><th class="num">${todoTotal + clarTotal}</th></tr></tfoot>
@@ -609,12 +596,6 @@ function jrSummary(metrics) {
   </div>`;
 }
 
-function jrConfigurationCell(row) {
-  const raw = row && Object.prototype.hasOwnProperty.call(row, 'configurationType') ? row.configurationType : null;
-  const shown = typeof jiraSearch !== 'undefined' && jiraSearch.stripSecrets ? jiraSearch.stripSecrets(raw, '') : raw;
-  return `<pre class="jr-payload mb-0">${jrEsc(JSON.stringify(shown, null, 2))}</pre>`;
-}
-
 function jrMoveText(row, transition) {
   const changes = (row.payload && row.payload.statusChanges) || [];
   const kept = transition === 'todo' || transition === 'clarification'
@@ -633,9 +614,8 @@ function jrRenderResults() {
   const message = document.getElementById('jrMessage');
   const meta = document.getElementById('jrMeta');
   const table = document.getElementById('jrTable');
-  const payload = document.getElementById('jrPayload');
   const button = document.getElementById('jrSearch');
-  if (!message || !meta || !table || !payload || !button) return;
+  if (!message || !meta || !table || !button) return;
   jrRenderMetrics();
   button.disabled = jrState.loading;
   button.innerHTML = jrState.loading
@@ -656,21 +636,18 @@ function jrRenderResults() {
     message.innerHTML = '<p class="muted mb-0">Consultando o Jira…</p>';
     meta.innerHTML = '';
     table.innerHTML = '';
-    payload.innerHTML = '';
     return;
   }
   if (jrState.error) {
     message.innerHTML = `<div class="result-banner result-fail"><i class="bi bi-exclamation-triangle-fill"></i><div><div class="result-title">Consulta não concluída</div><div class="result-sub">${jrEsc(jrState.error)}</div></div></div>`;
     meta.innerHTML = '';
     table.innerHTML = '';
-    payload.innerHTML = '';
     return;
   }
   message.innerHTML = '';
   if (!jrState.info) {
     meta.innerHTML = '';
     table.innerHTML = '<p class="muted mb-0">Faça uma consulta para ver os tickets.</p>';
-    payload.innerHTML = '';
     return;
   }
 
@@ -685,21 +662,13 @@ function jrRenderResults() {
   const noun = selected === 1 ? 'mudança' : 'mudanças';
   meta.innerHTML = `<p class="muted mb-2">${selected} ${noun} neste filtro.</p>${notes.map(note => `<p class="muted mb-2">${jrEsc(note)}</p>`).join('')}`;
   table.innerHTML = visible.length ? `<div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
-      <thead><tr><th>Key</th><th>Summary</th><th>Movimento</th><th>customfield_25803</th></tr></thead>
+      <thead><tr><th>Key</th><th>Summary</th><th>Movimento</th></tr></thead>
       <tbody>${visible.map(row => `<tr>
         <td>${jrKeyCell(row)}</td>
         <td class="jr-summary" title="${jrEsc(row.summary)}">${jrEsc(row.summary || '—')}</td>
         <td class="jr-move">${jrEsc(jrMoveText(row, jrState.transition) || '—')}</td>
-        <td class="jr-move">${jrConfigurationCell(row)}</td>
       </tr>`).join('')}</tbody>
     </table></div>` : '<p class="muted mb-0">Nenhum ticket para este filtro.</p>';
-
-  const preview = {
-    jql: jrState.info.jql,
-    total: jrState.info.total,
-    issues: jrState.issues.slice(0, 100).map(row => row.payload)
-  };
-  payload.innerHTML = `<details class="mt-3"><summary>Payload lido</summary><pre class="jr-payload">${jrEsc(JSON.stringify(preview, null, 2))}</pre></details>`;
 }
 
 async function jrConsult(event) {
@@ -985,6 +954,12 @@ if (typeof document !== 'undefined') {
     document.getElementById('jrMoves').addEventListener('click', applyMove);
     const metrics = document.getElementById('jrMetrics');
     metrics.addEventListener('change', event => {
+      const weekend = event.target.closest('[data-jr-weekend]');
+      if (weekend) {
+        jrState.hideWeekend = weekend.checked;
+        jrRenderMetrics();
+        return;
+      }
       const period = event.target.closest('input[name="jrPeriod"]');
       if (period) {
         jrState.period = period.value === 'saved' ? 'saved' : 'current';
