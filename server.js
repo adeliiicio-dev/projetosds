@@ -7,6 +7,7 @@ const jira = require('./jira-search');
 
 const ROOT = __dirname;
 const JIRA_TIMEOUT_MS = 20000;
+const DAY_PAUSE_MS = 400;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -565,23 +566,35 @@ async function runSearch(input, fetchImpl = global.fetch, filePath = METRICS_FIL
   const subsidiaryField = jira.subsidiaryFieldId(catalog);
   const extraFields = [...new Set([subsidiaryField, jira.PROMOTION_FIELD_ID].filter(Boolean))];
   const fields = jira.JIRA_FIELDS.concat(extraFields);
-  const jql = jira.buildSearchJql(pendingFilters);
-  const collected = await jira.collectIssues(body => jiraPost(config, body, fetchImpl), jql, fields);
-  for (const issue of collected.issues) {
-    issue.changelog = { histories: await loadChangelog(config, issue.key, fetchImpl) };
+  const seen = new Map();
+  const jqls = [];
+  let truncated = false;
+  for (let index = 0; index < split.pending.length; index += 1) {
+    if (index > 0) await new Promise(resolve => setTimeout(resolve, DAY_PAUSE_MS));
+    const day = split.pending[index];
+    const jql = jira.buildSearchJql({ ...filters, days: [day] });
+    jqls.push(jql);
+    const collected = await jira.collectIssues(body => jiraPost(config, body, fetchImpl), jql, fields);
+    if (collected.truncated) truncated = true;
+    for (const issue of collected.issues) {
+      const key = issue && issue.key ? String(issue.key) : '';
+      if (key && seen.has(key)) continue;
+      if (key) issue.changelog = { histories: await loadChangelog(config, issue.key, fetchImpl) };
+      seen.set(key || `sem-chave-${seen.size}`, issue);
+    }
   }
-  const built = jira.buildRows(collected.issues, {
+  const built = jira.buildRows([...seen.values()], {
     ...pendingFilters,
     subsidiaryField,
     token: config.token
   });
   return {
-    jql,
+    jql: jqls.join('\n'),
     total: built.rows.length,
     fetched: built.rows.length,
     matched: built.rows.length,
     dropped: 0,
-    truncated: collected.truncated,
+    truncated,
     changelog: true,
     subsidiaryField,
     issues: built.rows.map(row => ({ ...row, url: browseUrl(config.baseUrl, row.key) })),
@@ -762,5 +775,6 @@ module.exports = {
   searchUrl,
   browseUrl,
   runSearch,
-  publicMessage
+  publicMessage,
+  DAY_PAUSE_MS
 };

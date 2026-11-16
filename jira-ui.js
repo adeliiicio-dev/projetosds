@@ -13,6 +13,7 @@ const JR_DAY_SHORT = (typeof RP_DAYS !== 'undefined' ? RP_DAYS : [
 ]).map(day => day.short);
 
 const JR_USER_KEY = 'sds-report-v2-user';
+const JR_SEARCH_TIMEOUT_MS = 600000;
 const JR_SUBS = ['Chile', 'Peru', 'Colombia', 'Mexico'];
 const JR_SLIDE = [
   { code: 'SAMCOL', sub: 'Colombia' },
@@ -710,7 +711,7 @@ async function jrConsult(event) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ user, timeFrom, timeTo, days }),
-      signal: AbortSignal.timeout(120000)
+      signal: AbortSignal.timeout(JR_SEARCH_TIMEOUT_MS)
     });
     let data = null;
     try { data = await response.json(); } catch { data = null; }

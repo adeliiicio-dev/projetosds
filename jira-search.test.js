@@ -1130,6 +1130,98 @@ async function testIssueLookup() {
   }
 }
 
+async function testDayByDay() {
+  const saved = { JIRA_URL: process.env.JIRA_URL, BEARER_TOKEN: process.env.BEARER_TOKEN };
+  process.env.JIRA_URL = 'http://jira.example/jira';
+  process.env.BEARER_TOKEN = 'local-test-token';
+  const calls = [];
+  const histories = {
+    'LC-1': [
+      { created: '2026-11-10T18:15:00.000-0300', author: { displayName: 'Ada' }, items: [{ field: 'status', fromString: 'Request', toString: 'To do' }] },
+      { created: '2026-11-11T18:25:00.000-0300', author: { displayName: 'Ada' }, items: [{ field: 'status', fromString: 'Request', toString: 'Clarification' }] }
+    ],
+    'LC-3': [
+      { created: '2026-11-10T18:05:00.000-0300', author: { displayName: 'Ada' }, items: [{ field: 'status', fromString: 'Request', toString: 'Clarification' }] },
+      { created: '2026-11-11T18:10:00.000-0300', author: { displayName: 'Bruno Costa' }, items: [{ field: 'status', fromString: 'Clarification', toString: 'Request' }] },
+      { created: '2026-11-11T18:20:00.000-0300', author: { displayName: 'Ada' }, items: [{ field: 'status', fromString: 'Request', toString: 'To do' }] }
+    ]
+  };
+  const fetchImpl = async (url, options) => {
+    const href = String(url);
+    calls.push({ url: href, method: options.method, body: options.body || '', at: Date.now() });
+    if (href.endsWith('/rest/api/2/field')) {
+      return { ok: true, status: 200, text: async () => JSON.stringify([{ id: 'customfield_10234', name: 'COE_subsidiaries' }]) };
+    }
+    const changelog = href.match(/\/issue\/(LC-\d+)\?expand=changelog$/);
+    if (options.method === 'GET' && changelog) {
+      return { ok: true, status: 200, text: async () => JSON.stringify({ key: changelog[1], changelog: { histories: histories[changelog[1]] } }) };
+    }
+    if (href.endsWith('/rest/api/2/search') && options.method === 'POST') {
+      const jql = JSON.parse(options.body).jql;
+      const day = jql.includes('2026/11/10') ? '2026-11-10' : '2026-11-11';
+      const issues = ['LC-1', 'LC-3'].map(key => ({
+        key,
+        fields: {
+          summary: key,
+          status: { name: 'To Do' },
+          assignee: { displayName: 'Ada' },
+          updated: `${day}T18:30:00.000-0300`,
+          customfield_10234: { value: 'Chile' },
+          customfield_25803: { value: 'BOGO' },
+          issuetype: { name: 'Service Request' }
+        }
+      }));
+      return { ok: true, status: 200, text: async () => JSON.stringify({ total: issues.length, issues }) };
+    }
+    throw new Error(`caminho inesperado ${options.method} ${url}`);
+  };
+  const { app, port } = await listen(server.createHandler({ fetchImpl, metricsPath: EMPTY_METRICS }));
+  try {
+    const one = await requestOnce(port, 'POST', '/api/jira/search', JSON.stringify(FILTERS));
+    assert.equal(one.status, 200);
+    const onePosts = calls.filter(call => call.method === 'POST');
+    assert.equal(onePosts.length, 1);
+    assert.equal(JSON.parse(onePosts[0].body).jql.includes('2026/11/10'), true);
+    assert.equal(JSON.parse(onePosts[0].body).jql.includes('2026/11/11'), false);
+
+    calls.length = 0;
+    const started = Date.now();
+    const both = await requestOnce(port, 'POST', '/api/jira/search', JSON.stringify({
+      user: 'Ada', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10', '2026-11-11']
+    }));
+    assert.equal(both.status, 200);
+    const data = JSON.parse(both.body);
+    const posts = calls.filter(call => call.method === 'POST');
+    assert.equal(posts.length, 2);
+    assert.equal(JSON.parse(posts[0].body).jql.includes('2026/11/10'), true);
+    assert.equal(JSON.parse(posts[0].body).jql.includes('2026/11/11'), false);
+    assert.equal(JSON.parse(posts[1].body).jql.includes('2026/11/11'), true);
+    assert.equal(JSON.parse(posts[1].body).jql.includes('2026/11/10'), false);
+    assert.ok(posts[1].at - posts[0].at >= server.DAY_PAUSE_MS - 50);
+    assert.equal(calls.filter(call => call.url.includes('/issue/LC-1')).length, 1);
+    assert.equal(calls.filter(call => call.url.includes('/issue/LC-3')).length, 1);
+    assert.deepEqual(data.issues.map(row => row.key).sort(), ['LC-1', 'LC-3']);
+    const first = data.issues.find(row => row.key === 'LC-1');
+    assert.equal(first.payload.statusChanges.filter(change => change.date === '2026-11-10').length, 1);
+    assert.equal(first.payload.statusChanges.filter(change => change.date === '2026-11-11').length, 1);
+    const fixed = data.issues.find(row => row.key === 'LC-3');
+    assert.equal(fixed.corrected, true);
+    assert.equal(jira.countMoves(data.issues).all, 4);
+    const metrics = jira.metricsForRows(data.issues, 'Ada', 'all', RANGE_18_19);
+    assert.equal(metrics.tickets, 4);
+    assert.equal(metrics.weekdays[1], 2);
+    assert.equal(metrics.weekdays[2], 2);
+    assert.deepEqual(jira.promotionCounts(data.issues, 'Chile', 'Ada'), [{ label: 'BOGO', value: 4 }]);
+    assert.ok(Date.now() - started >= server.DAY_PAUSE_MS - 50);
+  } finally {
+    await new Promise(resolve => app.close(resolve));
+    ['JIRA_URL', 'BEARER_TOKEN'].forEach(key => {
+      if (saved[key] == null) delete process.env[key];
+      else process.env[key] = saved[key];
+    });
+  }
+}
+
 async function main() {
   await testJql();
   await testWindowsAndMoves();
@@ -1137,6 +1229,7 @@ async function main() {
   await testHttp();
   await testSavedDays();
   await testIssueLookup();
+  await testDayByDay();
   testSources();
   console.log('jira search tests ok');
 }
