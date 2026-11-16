@@ -378,6 +378,50 @@ function jrSlideTable() {
     <thead><tr><th>Sub</th><th>Tickets (quantidade)</th><th>To do</th><th>Clarification</th><th>Priority request</th></tr></thead>
     <tbody>${body}</tbody>
     <tfoot>${line('Total', total)}</tfoot>
+  </table></div>${jrGapTable()}`;
+}
+
+function jrMoveSubText(change, row) {
+  if (change && change.subsidiary != null && change.subsidiary !== '') return change.subsidiary;
+  return row && row.subsidiary != null ? row.subsidiary : '';
+}
+
+function jrGapMoves() {
+  const none = [];
+  const many = [];
+  const dates = jrState.period === 'saved' ? new Set(jrPeriodDates()) : null;
+  (jrState.issues || []).forEach(row => {
+    const changes = row && row.payload && Array.isArray(row.payload.statusChanges) ? row.payload.statusChanges : [];
+    changes.forEach(change => {
+      if (!change || (change.kind !== 'todo' && change.kind !== 'clarification')) return;
+      if (dates && !dates.has(change.date)) return;
+      const hits = JR_SUBS.filter(name => jrSubMatch(jrMoveSubText(change, row), name));
+      const bucket = hits.length === 0 ? none : hits.length > 1 ? many : null;
+      if (!bucket) return;
+      bucket.push(row && row.key ? String(row.key) : '');
+    });
+  });
+  return { none, many };
+}
+
+function jrKeyList(keys) {
+  const seen = [];
+  keys.forEach(key => {
+    if (key && !seen.includes(key)) seen.push(key);
+  });
+  return seen.join(', ');
+}
+
+function jrGapTable() {
+  const gap = jrGapMoves();
+  const rows = [];
+  if (gap.none.length) rows.push({ label: 'No matching sub', count: gap.none.length, keys: jrKeyList(gap.none) });
+  if (gap.many.length) rows.push({ label: 'More than one sub', count: gap.many.length, keys: jrKeyList(gap.many) });
+  if (!rows.length) return '';
+  const body = rows.map(row => `<tr><th>${jrEsc(row.label)}</th><td class="num">${row.count}</td><td>${jrEsc(row.keys)}</td></tr>`).join('');
+  return `<div class="table-wrap rp-fit mt-3"><table class="table table-sm table-dark table-bordered mb-0 rp-table">
+    <thead><tr><th></th><th>Mudanças</th><th>Tickets</th></tr></thead>
+    <tbody>${body}</tbody>
   </table></div>`;
 }
 
