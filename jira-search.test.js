@@ -50,6 +50,19 @@ async function testJql() {
   assert.ok(jql.includes('2026/11/11 18:00'));
   assert.ok(jql.indexOf('2026/11/10') < jql.indexOf('2026/11/11'));
   assert.equal(jira.JIRA_FIELDS.join(','), 'summary,status,assignee,updated,issuetype');
+  const many = jira.buildSearchJql({
+    user: ' Ada , Bruno Costa ',
+    timeFrom: '18:00',
+    timeTo: '19:00',
+    days: ['2026-11-10', '2026-11-11']
+  });
+  assert.ok(many.includes('status changed BY "Ada" DURING ('));
+  assert.ok(many.includes('status changed BY "Bruno Costa" DURING ('));
+  assert.equal(many.includes('BY "Ada, Bruno Costa"'), false);
+  assert.equal((many.match(/status changed BY/g) || []).length, 4);
+  const alone = jira.buildSearchJql({ user: 'Ada', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
+  assert.equal((alone.match(/status changed BY/g) || []).length, 1);
+  assert.throws(() => jira.assertSearchInput({ user: ' , ', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] }), /usuário/);
   assert.throws(() => jira.assertSearchInput({ user: 'Ada', timeFrom: '19:00', timeTo: '18:00', days: ['2026-11-10'] }), /depois do inicial/);
   assert.throws(() => jira.assertSearchInput({ user: 'Ada\nSilva', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] }), /inválido/);
 }
@@ -150,6 +163,32 @@ async function testWindowsAndMoves() {
   assert.equal(mixed.rows[0].moveText.includes('Bruno'), false);
   assert.equal(mixed.rows[0].moveText.includes('Adelino'), false);
   assert.equal(mixed.rows[0].corrected, false);
+
+  const shared = [
+    issue('LC-50', {
+      summary: 'Dois autores',
+      updated: '2026-11-10T18:40:00.000-0300',
+      fieldsExtra: { COE_subsidiaries: 'Chile', customfield_25803: { value: 'BOGO' } },
+      histories: [
+        { created: '2026-11-10T18:10:00.000-0300', author: { displayName: 'Adelino Souza' }, items: [{ field: 'status', fromString: 'Request', toString: 'To do' }] },
+        { created: '2026-11-10T18:25:00.000-0300', author: { displayName: 'Bruno Costa' }, items: [{ field: 'status', fromString: 'Request', toString: 'Clarification' }] },
+        { created: '2026-11-10T18:40:00.000-0300', author: { displayName: 'Carla Mendes' }, items: [{ field: 'status', fromString: 'Request', toString: 'To do' }] }
+      ]
+    })
+  ];
+  const bothUsers = jira.buildRows(shared, { user: 'Ade, Bruno Costa', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
+  assert.deepEqual(bothUsers.rows.map(row => row.key), ['LC-50']);
+  assert.equal(jira.countMoves(bothUsers.rows).all, 2);
+  assert.equal(jira.countMoves(bothUsers.rows).todo, 1);
+  assert.equal(jira.countMoves(bothUsers.rows).clarification, 1);
+  assert.equal(bothUsers.rows[0].moveText.includes('Carla'), false);
+  const once = jira.buildRows(shared, { user: 'Ade, Adelino Souza', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
+  assert.equal(jira.countMoves(once.rows).all, 1);
+  const pairMetrics = jira.metricsForRows(bothUsers.rows, 'Ade, Bruno Costa', 'all', RANGE_18_19);
+  assert.equal(pairMetrics.tickets, 2);
+  assert.equal(jira.metricsForRows(bothUsers.rows, 'Bruno Costa', 'all', RANGE_18_19).tickets, 1);
+  assert.deepEqual(jira.promotionCounts(bothUsers.rows, 'Chile', 'Ade, Bruno Costa'), [{ label: 'BOGO', value: 2 }]);
+  assert.deepEqual(jira.promotionCounts(bothUsers.rows, 'Chile', 'Ade, Adelino Souza'), [{ label: 'BOGO', value: 1 }]);
 
   const day = '2026-11-10T';
   const corrected = jira.buildRows([

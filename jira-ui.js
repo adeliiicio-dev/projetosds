@@ -249,7 +249,7 @@ function jrRenderMetrics() {
     metrics = jrSumSlices(slices);
     summaryMetrics = metrics;
     source = chosen.length
-      ? 'Números lidos do arquivo, só Request → To do e Request → Clarification dessa pessoa, sem nova consulta ao Jira.'
+      ? 'Números lidos do arquivo, só Request → To do e Request → Clarification desses nomes, sem nova consulta ao Jira.'
       : 'Escolha ao menos um dia salvo dessa pessoa.';
   } else {
     metrics = jiraSearch.metricsForRows(jrState.issues, jrCurrentUser(), 'all', jrState.range);
@@ -276,7 +276,7 @@ function jrRenderMetrics() {
       <label class="rp-check"><input type="radio" name="jrPeriod" value="saved"${jrState.period === 'saved' ? ' checked' : ''}${ownSaved.length ? '' : ' disabled'}> Dias salvos</label>
     </div>
     <div class="jr-days mb-3">${savedBoxes}</div>
-    <p class="muted mb-3">${metrics.tickets} ${noun} dele na faixa escolhida, no horário de Brasília. ${jrEsc(source)} Cada mudança entra em um dia e em uma faixa.</p>
+    <p class="muted mb-3">${metrics.tickets} ${noun} na faixa escolhida, no horário de Brasília. ${jrEsc(source)} Cada mudança entra em um dia e em uma faixa.</p>
     <h4 class="m-0 mb-3">Todas Subs</h4>
     ${jrMetricPair(metrics, metrics.bands, '')}
     ${jrExtraTables('')}
@@ -932,7 +932,10 @@ if (typeof document !== 'undefined') {
     });
     document.getElementById('jrFrom').addEventListener('input', jrRenderSlots);
     document.getElementById('jrTo').addEventListener('input', jrRenderSlots);
-    document.getElementById('jrUser').addEventListener('input', jrRenderResults);
+    document.getElementById('jrUser').addEventListener('input', () => {
+      jrSaveUser(document.getElementById('jrUser').value);
+      jrRenderResults();
+    });
     document.getElementById('jrForm').addEventListener('submit', jrConsult);
     const inspectForm = document.getElementById('jrInspectForm');
     if (inspectForm) inspectForm.addEventListener('submit', jrInspectTicket);

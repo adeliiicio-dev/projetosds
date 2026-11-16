@@ -50,8 +50,8 @@ function assertSearchInput(input) {
   const timeFrom = String(input.timeFrom || '').trim().slice(0, 5);
   const timeTo = String(input.timeTo || '').trim().slice(0, 5);
   const days = Array.isArray(input.days) ? input.days.map(day => String(day || '').trim()) : [];
-  if (!user) fail(400, 'Informe o nome do usuário.');
-  if (user.length > 200 || /[\u0000-\u001f]/.test(user)) fail(400, 'Nome de usuário inválido.');
+  if (!user || !searchUsers(user).length) fail(400, 'Informe o nome do usuário.');
+  if (user.length > 500 || /[\u0000-\u001f]/.test(user)) fail(400, 'Nome de usuário inválido.');
   if (!isTime(timeFrom) || !isTime(timeTo)) fail(400, 'Informe a faixa de horário.');
   if (toMinutes(timeFrom) >= toMinutes(timeTo)) fail(400, 'O horário final precisa ser depois do inicial.');
   const uniqueDays = [...new Set(days)].sort();
@@ -60,14 +60,18 @@ function assertSearchInput(input) {
   return { user, timeFrom, timeTo, days: uniqueDays };
 }
 
+function searchUsers(user) {
+  return String(user || '').split(',').map(name => name.trim()).filter(Boolean);
+}
+
 function buildSearchJql(filters) {
   const clean = assertSearchInput(filters);
-  const quotedUser = jqlQuote(clean.user);
+  const users = searchUsers(clean.user);
   const end = minuteBefore(clean.timeTo);
-  const when = clean.days.map(day => {
+  const when = clean.days.flatMap(day => {
     const start = jqlQuote(jiraStamp(day, clean.timeFrom));
     const stop = jqlQuote(jiraStamp(day, end));
-    return `status changed BY ${quotedUser} DURING (${start}, ${stop})`;
+    return users.map(user => `status changed BY ${jqlQuote(user)} DURING (${start}, ${stop})`);
   }).join(' OR ');
   return `(${when}) ORDER BY updated DESC`;
 }
@@ -218,7 +222,7 @@ function tokensCover(needles, hay) {
   return needles.every(word => hay.some(part => part === word || part.startsWith(word)));
 }
 
-function authorMatches(user, author) {
+function authorMatchesOne(user, author) {
   const query = nameTokens(user);
   const names = authorNames(author);
   if (!query.length || !names.length) return false;
@@ -227,6 +231,12 @@ function authorMatches(user, author) {
     if (!parts.length) return false;
     return tokensCover(query, parts) || tokensCover(parts, query);
   });
+}
+
+function authorMatches(user, author) {
+  const names = searchUsers(user);
+  if (!names.length) return false;
+  return names.some(name => authorMatchesOne(name, author));
 }
 
 function historyList(issue) {
@@ -724,6 +734,8 @@ const jiraSearchApi = {
   subsidiaryFieldId,
   promotionValue,
   issueTypeName,
+  searchUsers,
+  authorMatches,
   stripSecrets,
   promotionCounts,
   hourBands,
