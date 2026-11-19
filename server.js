@@ -506,6 +506,38 @@ function saveNote(input, filePath) {
     throw err;
   }
   const store = readStore(filePath);
+  const requestedId = String(input && input.id || '').trim();
+  const savedAt = new Date().toISOString();
+  if (requestedId) {
+    if (!/^[a-z0-9]{8,32}$/.test(requestedId)) {
+      const err = new Error('Anotação inválida.');
+      err.status = 400;
+      throw err;
+    }
+    const index = store.notes.findIndex(note => note.id === requestedId);
+    if (index < 0) {
+      const err = new Error('Anotação não encontrada.');
+      err.status = 404;
+      throw err;
+    }
+    const note = cleanStoredNote({
+      id: requestedId,
+      date,
+      title,
+      description,
+      subsidiaries,
+      priority: input && input.priority === true,
+      savedAt
+    });
+    if (!note) {
+      const err = new Error('Anotação inválida.');
+      err.status = 400;
+      throw err;
+    }
+    store.notes[index] = note;
+    writeStore(filePath, store);
+    return note;
+  }
   if (store.notes.length >= 200) {
     const err = new Error('O arquivo já tem anotações demais.');
     err.status = 400;
@@ -518,7 +550,7 @@ function saveNote(input, filePath) {
     description,
     subsidiaries,
     priority: input && input.priority === true,
-    savedAt: new Date().toISOString()
+    savedAt
   });
   if (!note) {
     const err = new Error('Anotação inválida.');

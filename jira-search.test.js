@@ -794,6 +794,17 @@ async function testHttp() {
     assert.match(page.type, /text\/html/);
     assert.match(page.body, /Relatório semanal/);
     assert.match(page.body, /id="rpDays"/);
+    assert.match(page.body, /data-jr-tab="jira"/);
+    assert.match(page.body, /data-jr-tab="notes"/);
+    const jiraTab = page.body.slice(page.body.indexOf('id="jrTabJira"'), page.body.indexOf('id="jrTabNotes"'));
+    const notesTab = page.body.slice(page.body.indexOf('id="jrTabNotes"'), page.body.indexOf('</section>', page.body.indexOf('id="jrTabNotes"')));
+    assert.match(jiraTab, /id="jrForm"/);
+    assert.match(jiraTab, /id="jrMetrics"/);
+    assert.equal(jiraTab.includes('id="rpDays"'), false);
+    assert.equal(jiraTab.includes('id="jrNoteForm"'), false);
+    assert.match(notesTab, /id="rpDays"/);
+    assert.match(notesTab, /id="jrNoteForm"/);
+    assert.equal(notesTab.includes('id="jrForm"'), false);
   assert.match(page.body, /id="jrInspectForm"/);
   assert.match(page.body, /id="jrInspectKey"/);
   assert.match(page.body, /id="jrInspect"/);
@@ -1018,6 +1029,35 @@ async function testSavedDays() {
     const withPriority = JSON.parse(fs.readFileSync(metricsPath, 'utf8'));
     assert.equal(withPriority.notes.some(item => item.priority === true && item.date === '2026-11-11'), true);
     assert.equal(withPriority.days.length, 2);
+    const plantao = withPriority.notes.find(item => item.title === 'Plantão');
+    const edited = await requestOnce(port, 'POST', '/api/jira/notes', JSON.stringify({
+      id: plantao.id,
+      date: '2026-11-13',
+      title: 'Plantão editado',
+      description: 'Fila atualizada',
+      subsidiaries: ['Peru'],
+      priority: true
+    }));
+    assert.equal(edited.status, 200);
+    const editedBody = JSON.parse(edited.body);
+    assert.equal(editedBody.note.id, plantao.id);
+    assert.equal(editedBody.notes.length, withPriority.notes.length);
+    assert.equal(editedBody.notes.filter(item => item.id === plantao.id).length, 1);
+    assert.equal(editedBody.note.title, 'Plantão editado');
+    assert.equal(editedBody.note.date, '2026-11-13');
+    assert.equal(editedBody.note.priority, true);
+    assert.deepEqual(editedBody.note.subsidiaries, ['Peru']);
+    const missingNote = await requestOnce(port, 'POST', '/api/jira/notes', JSON.stringify({
+      id: 'abc12345',
+      date: '2026-11-13',
+      title: 'Nova',
+      description: 'Não cria',
+      subsidiaries: ['Chile']
+    }));
+    assert.equal(missingNote.status, 404);
+    const afterMissing = JSON.parse(fs.readFileSync(metricsPath, 'utf8'));
+    assert.equal(afterMissing.notes.length, editedBody.notes.length);
+    assert.equal(afterMissing.notes.some(item => item.title === 'Nova'), false);
 
     const hidden = await requestOnce(port, 'GET', '/data/report-v2-metrics.json');
     assert.equal(hidden.status, 404);

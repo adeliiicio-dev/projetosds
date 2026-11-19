@@ -56,7 +56,8 @@ const jrState = {
   picked: new Set(),
   notes: [],
   noteStatus: '',
-  noteSaving: false
+  noteSaving: false,
+  noteId: ''
 };
 
 function jrEsc(value) {
@@ -877,6 +878,12 @@ function jrRenderNotes() {
     dayLine.textContent = date ? `Esta anotação entra em ${jrFmt(date)}.` : 'Informe a data da anotação.';
   }
   if (status) status.textContent = jrState.noteStatus;
+  const cancel = document.getElementById('jrNoteCancel');
+  const save = document.getElementById('jrNoteSave');
+  if (cancel) cancel.hidden = !jrState.noteId;
+  if (save) save.innerHTML = jrState.noteId
+    ? '<i class="bi bi-save"></i> Salvar alterações'
+    : '<i class="bi bi-save"></i> Salvar anotação';
   if (!list) return;
   const notes = (Array.isArray(jrState.notes) ? jrState.notes : []).filter(note => note.date === date);
   if (!date) {
@@ -888,10 +895,41 @@ function jrRenderNotes() {
     return;
   }
   list.innerHTML = notes.map(note => `<article class="border rounded p-3 mb-2">
-      <strong>${jrEsc(note.title)}</strong>
-      <span class="muted"> · ${jrEsc(jrFmt(note.date))} · ${jrEsc((note.subsidiaries || []).join(', '))}${note.priority ? ' · Priority request' : ''}</span>
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div>
+          <strong>${jrEsc(note.title)}</strong>
+          <span class="muted"> · ${jrEsc(jrFmt(note.date))} · ${jrEsc((note.subsidiaries || []).join(', '))}${note.priority ? ' · Priority request' : ''}</span>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-jr-edit="${jrEsc(note.id)}">Editar</button>
+      </div>
       <p class="mb-0 mt-2">${jrEsc(note.description).replace(/\n/g, '<br>')}</p>
     </article>`).join('');
+}
+
+function jrClearNoteForm() {
+  jrState.noteId = '';
+  const title = document.getElementById('jrNoteTitle');
+  const body = document.getElementById('jrNoteBody');
+  const priority = document.getElementById('jrNotePriority');
+  if (title) title.value = '';
+  if (body) body.value = '';
+  if (priority) priority.checked = false;
+  document.querySelectorAll('input[name="jrNoteSub"]').forEach(box => { box.checked = false; });
+}
+
+function jrEditNote(id) {
+  const note = (jrState.notes || []).find(item => item && item.id === id);
+  if (!note) return;
+  jrState.noteId = note.id;
+  document.getElementById('jrNoteTitle').value = note.title || '';
+  document.getElementById('jrNoteBody').value = note.description || '';
+  const date = document.getElementById('jrNoteDate');
+  if (date) date.value = note.date || '';
+  document.getElementById('jrNotePriority').checked = note.priority === true;
+  const subs = new Set(note.subsidiaries || []);
+  document.querySelectorAll('input[name="jrNoteSub"]').forEach(box => { box.checked = subs.has(box.value); });
+  jrState.noteStatus = 'Editando a anotação salva. Salvar atualiza essa anotação.';
+  jrRenderNotes();
 }
 
 async function jrSaveNote(event) {
@@ -911,19 +949,19 @@ async function jrSaveNote(event) {
   jrState.noteStatus = 'Salvando…';
   jrRenderNotes();
   try {
+    const editing = jrState.noteId;
+    const payload = { date, title, description, subsidiaries, priority };
+    if (editing) payload.id = editing;
     const response = await fetch('/api/jira/notes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ date, title, description, subsidiaries, priority })
+      body: JSON.stringify(payload)
     });
     const data = await response.json();
     if (!response.ok) throw new Error((data && data.error) || 'Não foi possível salvar a anotação.');
     jrState.notes = Array.isArray(data.notes) ? data.notes : [];
-    document.getElementById('jrNoteTitle').value = '';
-    document.getElementById('jrNoteBody').value = '';
-    document.querySelectorAll('input[name="jrNoteSub"]').forEach(box => { box.checked = false; });
-    document.getElementById('jrNotePriority').checked = false;
-    jrState.noteStatus = `Anotação salva em ${jrFmt(date)}.`;
+    jrClearNoteForm();
+    jrState.noteStatus = editing ? `Anotação atualizada em ${jrFmt(date)}.` : `Anotação salva em ${jrFmt(date)}.`;
     jrRenderResults();
   } catch (err) {
     jrState.noteStatus = err.message || 'Não foi possível salvar a anotação.';
@@ -985,6 +1023,29 @@ if (typeof document !== 'undefined') {
     const inspectForm = document.getElementById('jrInspectForm');
     if (inspectForm) inspectForm.addEventListener('submit', jrInspectTicket);
     document.getElementById('jrNoteForm').addEventListener('submit', jrSaveNote);
+    const noteList = document.getElementById('jrNoteList');
+    if (noteList) noteList.addEventListener('click', event => {
+      const button = event.target.closest('[data-jr-edit]');
+      if (!button) return;
+      jrEditNote(button.dataset.jrEdit);
+    });
+    const noteCancel = document.getElementById('jrNoteCancel');
+    if (noteCancel) noteCancel.addEventListener('click', () => {
+      jrClearNoteForm();
+      jrState.noteStatus = '';
+      jrRenderNotes();
+    });
+    const reportTabs = document.getElementById('jrReportTabs');
+    if (reportTabs) reportTabs.addEventListener('click', event => {
+      const tab = event.target.closest('[data-jr-tab]');
+      if (!tab) return;
+      const notes = tab.dataset.jrTab === 'notes';
+      document.getElementById('jrTabJira').hidden = notes;
+      document.getElementById('jrTabNotes').hidden = !notes;
+      reportTabs.querySelectorAll('[data-jr-tab]').forEach(button => {
+        button.classList.toggle('active', button === tab);
+      });
+    });
     const reportDays = document.getElementById('rpDays');
     if (reportDays) reportDays.addEventListener('click', () => {
       jrSyncNoteDate(true);
