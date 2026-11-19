@@ -463,6 +463,24 @@ h1 {
 .rp-stat span { display: block; color: var(--text-muted); font-size: .75rem; }
 .rp-stat strong { display: block; font-size: 1.15rem; margin-top: 2px; }
 .rp-stat em { display: block; margin-top: 6px; font-style: normal; color: #9aa6d6; font-size: .78rem; line-height: 1.35; }
+.rp-guide-off { display: none; }
+.jr-days { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.jr-extra { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.jr-moves { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; }
+.jr-save-day { max-width: 16rem; width: auto; }
+.table-wrap td.jr-summary, .table-wrap td.jr-move { white-space: pre-line; max-width: 420px; }
+.jr-key { color: #9db4ff; font-weight: 700; text-decoration: none; }
+.jr-payload {
+  max-height: 280px;
+  overflow: auto;
+  background: rgba(11, 18, 51, .45);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px;
+  color: #d6defa;
+  font-size: .75rem;
+  white-space: pre-wrap;
+}
 @media (max-width: 900px) {
   .rp-grid, .rp-pair, .rp-stats, .rp-stats-2 { grid-template-columns: 1fr; }
 }
@@ -471,7 +489,7 @@ h1 {
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   html, body, .content-area { width: auto !important; overflow: visible !important; background: #080d22 !important; color: #f8fafc !important; }
   .wrapper { display: block !important; }
-  .sidebar, .no-print, #rpDays, #screen-reports > .section-card, .subtitle { display: none !important; }
+  .sidebar, .no-print, #rpDays, #rpPasteCard, .subtitle { display: none !important; }
   .content-area { margin: 0 !important; padding: 0 !important; max-width: 100% !important; min-width: 0 !important; }
   .screen { display: none !important; }
   #screen-reports { display: block !important; }
