@@ -1346,9 +1346,18 @@ async function testClarificationGroups() {
   );
   assert.deepEqual(groups.left.map(row => row.key), ['LC-BOTH', 'LC-LEFT']);
   assert.deepEqual(groups.still.map(row => row.key), ['LC-STILL', 'LC-SECRET', 'LC-BOTH']);
-  assert.equal(groups.left.find(row => row.key === 'LC-LEFT').sentLabel, '10/11, 18:10');
-  assert.equal(groups.still.find(row => row.key === 'LC-STILL').sentLabel, '10/11, 17:30');
-  assert.equal(groups.left.find(row => row.key === 'LC-BOTH').sentLabel, '10/11, 18:05');
+  const leftRow = groups.left.find(row => row.key === 'LC-LEFT');
+  assert.equal(leftRow.sentLabel, '10/11, 18:10');
+  assert.equal(leftRow.leftTo, 'To do');
+  assert.equal(leftRow.leftLabel, '10/11, 18:40');
+  const stillRow = groups.still.find(row => row.key === 'LC-STILL');
+  assert.equal(stillRow.sentLabel, '10/11, 17:30');
+  assert.equal(stillRow.leftTo, undefined);
+  assert.equal(stillRow.leftLabel, undefined);
+  const bothLeft = groups.left.find(row => row.key === 'LC-BOTH');
+  assert.equal(bothLeft.sentLabel, '10/11, 18:05');
+  assert.equal(bothLeft.leftTo, 'Request');
+  assert.equal(bothLeft.leftLabel, '10/11, 18:20');
   assert.equal(groups.still.find(row => row.key === 'LC-BOTH').sentLabel, '10/11, 18:30');
   assert.equal(groups.still.find(row => row.key === 'LC-SECRET').summary, 'Portal …');
   const shared = jira.clarificationGroups([stillIssue], { ...filters, user: 'Ada, Ada' });
@@ -1428,10 +1437,14 @@ async function testClarificationSearch() {
     assert.equal(JSON.parse(onePosts[0].body).jql.includes('2026/11/11'), false);
     assert.deepEqual(oneData.left.map(row => row.key), ['LC-21']);
     assert.equal(oneData.left[0].sentLabel, '10/11, 18:10');
+    assert.equal(oneData.left[0].leftTo, 'Request');
+    assert.equal(oneData.left[0].leftLabel, '10/11, 18:40');
     assert.equal(oneData.left[0].summary, 'Portal …');
     assert.match(oneData.left[0].url, /\/browse\/LC-21$/);
     assert.deepEqual(oneData.still.map(row => row.key), ['LC-22']);
     assert.equal(oneData.still[0].sentLabel, '10/11, 17:30');
+    assert.equal(oneData.still[0].leftTo, undefined);
+    assert.equal(oneData.still[0].leftLabel, undefined);
     assert.equal(calls.filter(call => call.url.includes('/issue/LC-21')).length, 1);
     assert.equal(calls.some(call => call.url.includes('/rest/api/2/field')), false);
 

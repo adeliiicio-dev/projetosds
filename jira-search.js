@@ -784,7 +784,7 @@ function clarificationGroups(issues, filters) {
         return;
       }
       if (open && foldStatus(move.to)) {
-        stays.push({ ...open, leaveAt: move.at, knownLeave: true });
+        stays.push({ ...open, leaveAt: move.at, leaveTo: move.to, knownLeave: true });
         open = null;
       }
     });
@@ -812,8 +812,15 @@ function clarificationGroups(issues, filters) {
         sentLabel: formatParts(entry)
       };
       if (!row.key) return;
-      if (stay.knownLeave || !current) left.push(row);
-      else still.push(row);
+      if (stay.knownLeave || !current) {
+        const leave = stay.knownLeave ? clockParts(stay.leaveAt) : null;
+        const destination = stay.leaveTo || (!current ? statusName(fields.status) : '');
+        const leftTo = stripSecrets(destination || '', token);
+        row.leftTo = typeof leftTo === 'string' ? leftTo : '';
+        row.leftAt = stay.knownLeave ? (stay.leaveAt || '') : '';
+        row.leftLabel = leave ? formatParts(leave) : '';
+        left.push(row);
+      } else still.push(row);
     });
   });
   const bySent = (a, b) => {

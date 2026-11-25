@@ -673,13 +673,17 @@ function jrSyncSearchButton() {
     : '<i class="bi bi-search"></i> Consultar';
 }
 
-function jrClarificationTable(rows) {
+function jrClarificationTable(rows, showLeave) {
   if (!rows.length) return '<p class="muted mb-0">Nenhum ticket.</p>';
+  const head = showLeave
+    ? '<th>Ticket</th><th>Enviado para Clarification</th><th>Saiu para</th><th>Quando saiu</th>'
+    : '<th>Ticket</th><th>Enviado para Clarification</th>';
   return `<div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
-      <thead><tr><th>Ticket</th><th>Enviado para Clarification</th></tr></thead>
+      <thead><tr>${head}</tr></thead>
       <tbody>${rows.map(row => `<tr>
         <td>${jrKeyCell(row)}${row.summary ? ` <span class="jr-summary">${jrEsc(row.summary)}</span>` : ''}</td>
         <td>${jrEsc(row.sentLabel || '—')}</td>
+        ${showLeave ? `<td>${jrEsc(row.leftTo || '—')}</td><td>${jrEsc(row.leftLabel || '—')}</td>` : ''}
       </tr>`).join('')}</tbody>
     </table></div>`;
 }
@@ -706,7 +710,7 @@ function jrRenderClarification() {
   body.innerHTML = `${note}
     <h5 class="mb-2">Tickets que foram para Clarification e depois saíram</h5>
     <p class="muted mb-2">Estavam em Clarification e o status mudou depois.</p>
-    ${jrClarificationTable(left)}
+    ${jrClarificationTable(left, true)}
     <h5 class="mb-2 mt-4">Tickets que ainda estão em Clarification</h5>
     ${jrClarificationTable(still)}`;
 }
