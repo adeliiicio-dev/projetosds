@@ -62,6 +62,20 @@ async function testJql() {
   assert.equal((many.match(/status changed BY/g) || []).length, 4);
   const alone = jira.buildSearchJql({ user: 'Ada', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] });
   assert.equal((alone.match(/status changed BY/g) || []).length, 1);
+  const clarification = jira.buildClarificationJql({
+    user: ' Ada , Bruno Costa ',
+    timeFrom: '18:00',
+    timeTo: '19:00',
+    days: ['2026-11-10', '2026-11-11']
+  });
+  assert.ok(clarification.includes('status WAS "Clarification" DURING ("2026/11/10 18:00", "2026/11/10 18:59")'));
+  assert.ok(clarification.includes('status WAS "Clarification" DURING ("2026/11/11 18:00", "2026/11/11 18:59")'));
+  assert.ok(clarification.includes('status changed BY "Ada" TO "Clarification"'));
+  assert.ok(clarification.includes('status changed BY "Bruno Costa" TO "Clarification"'));
+  assert.equal(clarification.includes('status changed BY "Ada" DURING'), false);
+  assert.equal(clarification.includes('status changed BY "Bruno Costa" DURING'), false);
+  assert.equal((clarification.match(/status changed BY/g) || []).length, 2);
+  assert.deepEqual(jira.CLARIFICATION_FIELDS, ['summary', 'status']);
   assert.throws(() => jira.assertSearchInput({ user: ' , ', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] }), /usuário/);
   assert.throws(() => jira.assertSearchInput({ user: 'Ada', timeFrom: '19:00', timeTo: '18:00', days: ['2026-11-10'] }), /depois do inicial/);
   assert.throws(() => jira.assertSearchInput({ user: 'Ada\nSilva', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] }), /inválido/);
@@ -810,6 +824,14 @@ async function testHttp() {
   assert.match(page.body, /id="jrInspect"/);
   const weeklyForm = page.body.slice(page.body.indexOf('<form id="jrForm"'), page.body.indexOf('</form>', page.body.indexOf('<form id="jrForm"')) + 7);
   assert.equal(weeklyForm.includes('jrInspect'), false);
+  assert.match(weeklyForm, /name="jrQuery"/);
+  assert.match(weeklyForm, /value="weekly"/);
+  assert.match(weeklyForm, /value="clarification"/);
+  assert.equal(weeklyForm.includes('id="jrClarification"'), false);
+  assert.match(jiraTab, /id="jrClarification"/);
+  assert.ok(jiraTab.indexOf('id="jrForm"') < jiraTab.indexOf('id="jrClarification"'));
+  assert.ok(jiraTab.indexOf('id="jrClarification"') < jiraTab.indexOf('id="jrInspectForm"'));
+  assert.equal(notesTab.includes('id="jrClarification"'), false);
     assert.match(page.body, /Anotações/);
     assert.equal(page.body.includes('id="rpPasteCard"'), false);
     assert.equal(page.body.includes('id="rpReport"'), false);
@@ -1262,6 +1284,181 @@ async function testDayByDay() {
   }
 }
 
+function historyItem(at, author, from, to) {
+  return {
+    created: at,
+    author: { displayName: author },
+    items: [{ field: 'status', fromString: from, toString: to }]
+  };
+}
+
+async function testClarificationGroups() {
+  const filters = { user: 'Ada', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10'] };
+  const leftIssue = issue('LC-LEFT', {
+    summary: 'Saiu',
+    status: 'To Do',
+    histories: [
+      historyItem('2026-11-10T18:10:00.000-0300', 'Ada', 'Request', 'Clarification'),
+      historyItem('2026-11-10T18:40:00.000-0300', 'Bruno', 'Clarification', 'To do')
+    ]
+  });
+  const stillIssue = issue('LC-STILL', {
+    summary: 'Parado',
+    status: 'Clarification',
+    histories: [
+      historyItem('2026-11-10T17:30:00.000-0300', 'Ada', 'To do', 'Clarification')
+    ]
+  });
+  const other = issue('LC-OTHER', {
+    summary: 'Bruno',
+    status: 'Clarification',
+    histories: [
+      historyItem('2026-11-10T18:20:00.000-0300', 'Bruno Costa', 'Request', 'Clarification')
+    ]
+  });
+  const early = issue('LC-EARLY', {
+    summary: 'Antes',
+    status: 'Request',
+    histories: [
+      historyItem('2026-11-10T17:00:00.000-0300', 'Ada', 'Request', 'Clarification'),
+      historyItem('2026-11-10T17:20:00.000-0300', 'Ada', 'Clarification', 'Request')
+    ]
+  });
+  const both = issue('LC-BOTH', {
+    summary: 'Duas',
+    status: 'Clarificação',
+    histories: [
+      historyItem('2026-11-10T18:05:00.000-0300', 'Ada', 'Request', 'Clarification'),
+      historyItem('2026-11-10T18:20:00.000-0300', 'Ada', 'Clarification', 'Request'),
+      historyItem('2026-11-10T18:30:00.000-0300', 'Ada', 'Request', 'Clarificação')
+    ]
+  });
+  const secret = issue('LC-SECRET', {
+    summary: 'Portal local-test-token',
+    status: 'Clarification',
+    histories: [
+      historyItem('2026-11-10T18:12:00.000-0300', 'Ada', 'Request', 'Clarification')
+    ]
+  });
+  const groups = jira.clarificationGroups(
+    [leftIssue, stillIssue, other, early, both, secret],
+    { ...filters, token: 'local-test-token' }
+  );
+  assert.deepEqual(groups.left.map(row => row.key), ['LC-BOTH', 'LC-LEFT']);
+  assert.deepEqual(groups.still.map(row => row.key), ['LC-STILL', 'LC-SECRET', 'LC-BOTH']);
+  assert.equal(groups.left.find(row => row.key === 'LC-LEFT').sentLabel, '10/11, 18:10');
+  assert.equal(groups.still.find(row => row.key === 'LC-STILL').sentLabel, '10/11, 17:30');
+  assert.equal(groups.left.find(row => row.key === 'LC-BOTH').sentLabel, '10/11, 18:05');
+  assert.equal(groups.still.find(row => row.key === 'LC-BOTH').sentLabel, '10/11, 18:30');
+  assert.equal(groups.still.find(row => row.key === 'LC-SECRET').summary, 'Portal …');
+  const shared = jira.clarificationGroups([stillIssue], { ...filters, user: 'Ada, Ada' });
+  assert.equal(shared.still.length, 1);
+  const bruno = jira.clarificationGroups([other], { ...filters, user: 'Ada, Bruno Costa' });
+  assert.deepEqual(bruno.still.map(row => row.key), ['LC-OTHER']);
+}
+
+async function testClarificationSearch() {
+  const saved = { JIRA_URL: process.env.JIRA_URL, BEARER_TOKEN: process.env.BEARER_TOKEN };
+  const token = 'local-test-token';
+  process.env.JIRA_URL = 'http://jira.example/jira';
+  process.env.BEARER_TOKEN = token;
+  const calls = [];
+  const histories = {
+    'LC-21': [
+      historyItem('2026-11-10T18:10:00.000-0300', 'Ada', 'Request', 'Clarification'),
+      historyItem('2026-11-10T18:40:00.000-0300', 'Bruno', 'Clarification', 'Request')
+    ],
+    'LC-22': [
+      historyItem('2026-11-10T17:30:00.000-0300', 'Ada', 'To do', 'Clarification')
+    ],
+    'LC-23': [
+      historyItem('2026-11-10T18:15:00.000-0300', 'Bruno Costa', 'Request', 'Clarification')
+    ]
+  };
+  const statusName = { 'LC-21': 'Request', 'LC-22': 'Clarification', 'LC-23': 'Clarification' };
+  const fetchImpl = async (url, options) => {
+    const href = String(url);
+    calls.push({ url: href, method: options.method, body: options.body || '', at: Date.now() });
+    if (href.endsWith('/rest/api/2/field')) throw new Error('catálogo não entra na busca de Clarification');
+    const changelog = href.match(/\/issue\/(LC-\d+)(?:\?|$)/);
+    if (options.method === 'GET' && changelog) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ changelog: { histories: histories[changelog[1]] || [] } })
+      };
+    }
+    if (href.endsWith('/rest/api/2/search') && options.method === 'POST') {
+      const body = JSON.parse(options.body);
+      assert.deepEqual(body.fields, ['summary', 'status']);
+      assert.equal(body.jql.includes('status WAS "Clarification" DURING'), true);
+      assert.equal(body.jql.includes('status changed BY "Ada" DURING'), false);
+      assert.equal(/status changed BY ".+" DURING/.test(body.jql), false);
+      const keys = ['LC-21', 'LC-22', 'LC-23'];
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          total: keys.length,
+          issues: keys.map(key => ({
+            key,
+            fields: { summary: `Portal ${token}`, status: { name: statusName[key] } }
+          }))
+        })
+      };
+    }
+    throw new Error(`caminho inesperado ${options.method} ${url}`);
+  };
+  const { app, port } = await listen(server.createHandler({ fetchImpl, metricsPath: EMPTY_METRICS }));
+  try {
+    const missing = await requestOnce(port, 'GET', '/api/jira/clarification');
+    assert.equal(missing.status, 405);
+    const bad = await requestOnce(port, 'POST', '/api/jira/clarification', JSON.stringify({ user: 'Ada' }));
+    assert.equal(bad.status, 400);
+    assert.equal(calls.length, 0);
+    const one = await requestOnce(port, 'POST', '/api/jira/clarification', JSON.stringify(FILTERS));
+    assert.equal(one.status, 200);
+    assert.equal(one.body.includes(token), false);
+    const oneData = JSON.parse(one.body);
+    assert.equal(oneData.issues, undefined);
+    assert.equal(oneData.saved, undefined);
+    const onePosts = calls.filter(call => call.method === 'POST');
+    assert.equal(onePosts.length, 1);
+    assert.equal(JSON.parse(onePosts[0].body).jql.includes('2026/11/10'), true);
+    assert.equal(JSON.parse(onePosts[0].body).jql.includes('2026/11/11'), false);
+    assert.deepEqual(oneData.left.map(row => row.key), ['LC-21']);
+    assert.equal(oneData.left[0].sentLabel, '10/11, 18:10');
+    assert.equal(oneData.left[0].summary, 'Portal …');
+    assert.match(oneData.left[0].url, /\/browse\/LC-21$/);
+    assert.deepEqual(oneData.still.map(row => row.key), ['LC-22']);
+    assert.equal(oneData.still[0].sentLabel, '10/11, 17:30');
+    assert.equal(calls.filter(call => call.url.includes('/issue/LC-21')).length, 1);
+    assert.equal(calls.some(call => call.url.includes('/rest/api/2/field')), false);
+
+    calls.length = 0;
+    const both = await requestOnce(port, 'POST', '/api/jira/clarification', JSON.stringify({
+      user: 'Ada', timeFrom: '18:00', timeTo: '19:00', days: ['2026-11-10', '2026-11-11']
+    }));
+    assert.equal(both.status, 200);
+    const posts = calls.filter(call => call.method === 'POST');
+    assert.equal(posts.length, 2);
+    assert.equal(JSON.parse(posts[0].body).jql.includes('2026/11/11'), false);
+    assert.equal(JSON.parse(posts[1].body).jql.includes('2026/11/10'), false);
+    assert.equal(JSON.parse(posts[1].body).jql.includes('2026/11/11'), true);
+    assert.ok(posts[1].at - posts[0].at >= server.DAY_PAUSE_MS - 50);
+    assert.equal(calls.filter(call => call.url.includes('/issue/LC-22')).length, 1);
+    const data = JSON.parse(both.body);
+    assert.deepEqual(data.left.map(row => row.key), ['LC-21']);
+    assert.deepEqual(data.still.map(row => row.key), ['LC-22']);
+  } finally {
+    await new Promise(resolve => app.close(resolve));
+    ['JIRA_URL', 'BEARER_TOKEN'].forEach(key => {
+      if (saved[key] == null) delete process.env[key];
+      else process.env[key] = saved[key];
+    });
+  }
+}
+
 async function main() {
   await testJql();
   await testWindowsAndMoves();
@@ -1270,6 +1467,8 @@ async function main() {
   await testSavedDays();
   await testIssueLookup();
   await testDayByDay();
+  await testClarificationGroups();
+  await testClarificationSearch();
   testSources();
   console.log('jira search tests ok');
 }

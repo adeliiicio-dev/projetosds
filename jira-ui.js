@@ -57,7 +57,10 @@ const jrState = {
   notes: [],
   noteStatus: '',
   noteSaving: false,
-  noteId: ''
+  noteId: '',
+  query: 'weekly',
+  clarification: null,
+  clarificationError: ''
 };
 
 function jrEsc(value) {
@@ -656,17 +659,94 @@ function jrKeyCell(row) {
   return `<a class="jr-key" href="${jrEsc(row.url)}" target="_blank" rel="noopener">${jrEsc(key)}</a>`;
 }
 
-function jrRenderResults() {
-  const message = document.getElementById('jrMessage');
-  const meta = document.getElementById('jrMeta');
-  const table = document.getElementById('jrTable');
+function jrQueryMode() {
+  const picked = document.querySelector('input[name="jrQuery"]:checked');
+  return picked && picked.value === 'clarification' ? 'clarification' : 'weekly';
+}
+
+function jrSyncSearchButton() {
   const button = document.getElementById('jrSearch');
-  if (!message || !meta || !table || !button) return;
-  jrRenderMetrics();
+  if (!button) return;
   button.disabled = jrState.loading;
   button.innerHTML = jrState.loading
     ? '<i class="bi bi-hourglass-split"></i> Consultando…'
     : '<i class="bi bi-search"></i> Consultar';
+}
+
+function jrClarificationTable(rows) {
+  if (!rows.length) return '<p class="muted mb-0">Nenhum ticket.</p>';
+  return `<div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
+      <thead><tr><th>Ticket</th><th>Enviado para Clarification</th></tr></thead>
+      <tbody>${rows.map(row => `<tr>
+        <td>${jrKeyCell(row)}${row.summary ? ` <span class="jr-summary">${jrEsc(row.summary)}</span>` : ''}</td>
+        <td>${jrEsc(row.sentLabel || '—')}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+}
+
+function jrRenderClarification() {
+  const body = document.getElementById('jrClarificationBody');
+  if (!body) return;
+  if (jrState.loading && jrState.query === 'clarification') {
+    body.innerHTML = '<p class="muted mb-0">Consultando o Jira…</p>';
+    return;
+  }
+  if (jrState.clarificationError) {
+    body.innerHTML = `<div class="result-banner result-fail"><i class="bi bi-exclamation-triangle-fill"></i><div><div class="result-title">Consulta não concluída</div><div class="result-sub">${jrEsc(jrState.clarificationError)}</div></div></div>`;
+    return;
+  }
+  const data = jrState.clarification;
+  if (!data) {
+    body.innerHTML = '<p class="muted mb-0">Consulte para ver os tickets que estavam em Clarification.</p>';
+    return;
+  }
+  const left = Array.isArray(data.left) ? data.left : [];
+  const still = Array.isArray(data.still) ? data.still : [];
+  const note = data.truncated ? '<p class="muted mb-3">A busca atingiu o limite e pode haver mais tickets.</p>' : '';
+  body.innerHTML = `${note}
+    <h5 class="mb-2">Tickets que foram para Clarification e depois saíram</h5>
+    <p class="muted mb-2">Estavam em Clarification e o status mudou depois.</p>
+    ${jrClarificationTable(left)}
+    <h5 class="mb-2 mt-4">Tickets que ainda estão em Clarification</h5>
+    ${jrClarificationTable(still)}`;
+}
+
+function jrApplyQueryMode() {
+  jrState.query = jrQueryMode();
+  const clarification = jrState.query === 'clarification';
+  const block = document.getElementById('jrClarification');
+  const tickets = document.getElementById('jrTickets');
+  const metrics = document.getElementById('jrMetrics');
+  if (block) block.hidden = !clarification;
+  if (tickets) tickets.hidden = clarification;
+  if (metrics) metrics.hidden = clarification;
+  if (clarification) jrRenderClarification();
+}
+
+function jrReadFilters() {
+  const user = document.getElementById('jrUser').value.trim();
+  const timeFrom = document.getElementById('jrFrom').value.slice(0, 5);
+  const timeTo = document.getElementById('jrTo').value.slice(0, 5);
+  const days = [...jrState.days];
+  if (!user) return { error: 'Informe o nome do usuário.' };
+  if (!timeFrom || !timeTo || timeFrom >= timeTo) {
+    return {
+      error: timeFrom && timeTo && timeFrom >= timeTo
+        ? 'O horário final precisa ser depois do inicial.'
+        : 'Informe a faixa de horário.'
+    };
+  }
+  if (!days.length) return { error: 'Escolha ao menos um dia.' };
+  return { user, timeFrom, timeTo, days };
+}
+
+function jrRenderResults() {
+  const message = document.getElementById('jrMessage');
+  const meta = document.getElementById('jrMeta');
+  const table = document.getElementById('jrTable');
+  if (!message || !meta || !table) return;
+  jrRenderMetrics();
+  jrSyncSearchButton();
 
   const counts = typeof jiraSearch !== 'undefined'
     ? jiraSearch.countMoves(jrState.issues)
@@ -717,37 +797,72 @@ function jrRenderResults() {
     </table></div>` : '<p class="muted mb-0">Nenhum ticket para este filtro.</p>';
 }
 
+async function jrConsultClarification(filters) {
+  jrState.loading = true;
+  jrState.clarificationError = '';
+  jrSyncSearchButton();
+  jrRenderClarification();
+  try {
+    const response = await fetch('/api/jira/clarification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        user: filters.user,
+        timeFrom: filters.timeFrom,
+        timeTo: filters.timeTo,
+        days: filters.days
+      }),
+      signal: AbortSignal.timeout(JR_SEARCH_TIMEOUT_MS)
+    });
+    let data = null;
+    try { data = await response.json(); } catch { data = null; }
+    if (!response.ok) throw new Error(data && data.error || 'Não foi possível consultar o Jira.');
+    jrState.clarification = {
+      left: Array.isArray(data.left) ? data.left : [],
+      still: Array.isArray(data.still) ? data.still : [],
+      truncated: !!(data && data.truncated)
+    };
+    jrState.clarificationError = '';
+  } catch (err) {
+    jrState.clarification = null;
+    if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      jrState.clarificationError = 'O Jira demorou demais para responder.';
+    } else if (!err || err.message === 'Failed to fetch' || /NetworkError|Failed to fetch/i.test(err.message || '')) {
+      jrState.clarificationError = 'Não foi possível consultar o Jira. Abra a ferramenta com node server.js.';
+    } else {
+      jrState.clarificationError = err.message || 'Não foi possível consultar o Jira.';
+    }
+  } finally {
+    jrState.loading = false;
+    jrSyncSearchButton();
+    jrRenderClarification();
+  }
+}
+
 async function jrConsult(event) {
   event.preventDefault();
   if (jrState.loading) return;
-  const user = document.getElementById('jrUser').value.trim();
-  const timeFrom = document.getElementById('jrFrom').value.slice(0, 5);
-  const timeTo = document.getElementById('jrTo').value.slice(0, 5);
-  const days = [...jrState.days];
-  if (!user) {
-    jrState.error = 'Informe o nome do usuário.';
-    jrState.info = null;
-    jrState.issues = [];
-    jrRenderResults();
+  const filters = jrReadFilters();
+  jrApplyQueryMode();
+  if (filters.error) {
+    if (jrState.query === 'clarification') {
+      jrState.clarificationError = filters.error;
+      jrState.clarification = null;
+      jrRenderClarification();
+    } else {
+      jrState.error = filters.error;
+      jrState.info = null;
+      jrState.issues = [];
+      jrRenderResults();
+    }
     return;
   }
-  if (!timeFrom || !timeTo || timeFrom >= timeTo) {
-    jrState.error = timeFrom && timeTo && timeFrom >= timeTo
-      ? 'O horário final precisa ser depois do inicial.'
-      : 'Informe a faixa de horário.';
-    jrState.info = null;
-    jrState.issues = [];
-    jrRenderResults();
+  jrSaveUser(filters.user);
+  if (jrState.query === 'clarification') {
+    await jrConsultClarification(filters);
     return;
   }
-  if (!days.length) {
-    jrState.error = 'Escolha ao menos um dia.';
-    jrState.info = null;
-    jrState.issues = [];
-    jrRenderResults();
-    return;
-  }
-  jrSaveUser(user);
+  const { user, timeFrom, timeTo, days } = filters;
   jrState.loading = true;
   jrState.error = '';
   jrRenderResults();
@@ -984,6 +1099,7 @@ if (typeof document !== 'undefined') {
     jrRenderDays();
     jrSyncNoteDate(true);
     jrRenderResults();
+    jrApplyQueryMode();
     jrLoadSaved();
 
     document.getElementById('jrPrevWeek').addEventListener('click', () => {
@@ -1020,6 +1136,9 @@ if (typeof document !== 'undefined') {
       jrRenderResults();
     });
     document.getElementById('jrForm').addEventListener('submit', jrConsult);
+    document.getElementById('jrForm').addEventListener('change', event => {
+      if (event.target && event.target.name === 'jrQuery') jrApplyQueryMode();
+    });
     const inspectForm = document.getElementById('jrInspectForm');
     if (inspectForm) inspectForm.addEventListener('submit', jrInspectTicket);
     document.getElementById('jrNoteForm').addEventListener('submit', jrSaveNote);

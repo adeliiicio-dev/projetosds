@@ -372,6 +372,14 @@
               <h4 class="m-0">Filtros</h4>
             </div>
             <div class="row g-3">
+              <div class="col-12">
+                <span class="form-label d-block">Consulta</span>
+                <div class="d-flex flex-wrap gap-3">
+                  <label class="rp-check"><input type="radio" name="jrQuery" value="weekly" checked> Semanal</label>
+                  <label class="rp-check"><input type="radio" name="jrQuery" value="clarification"> Clarification</label>
+                </div>
+                <p class="muted mt-2 mb-0">Clarification busca só os tickets que estavam em Clarification nesse dia e horário. Não monta as métricas da semana.</p>
+              </div>
               <div class="col-lg-4">
                 <label class="form-label" for="jrUser">Usuário</label>
                 <input id="jrUser" class="form-control" placeholder="Nomes no Jira, separados por vírgula" autocomplete="off">
@@ -399,6 +407,14 @@
             <button type="submit" class="btn btn-samsung" id="jrSearch"><i class="bi bi-search"></i> Consultar</button>
           </form>
 
+          <div id="jrClarification" class="section-card" hidden>
+            <div class="section-title">
+              <i class="bi bi-hourglass-split text-accent fs-4"></i>
+              <h4 class="m-0">Clarification</h4>
+            </div>
+            <div id="jrClarificationBody"></div>
+          </div>
+
           <form id="jrInspectForm" class="section-card">
             <div class="section-title">
               <i class="bi bi-ticket-detailed text-accent fs-4"></i>
@@ -413,7 +429,7 @@
             <div id="jrInspectOut" class="mt-3"></div>
           </form>
 
-          <div class="section-card">
+          <div class="section-card" id="jrTickets">
             <div class="section-title">
               <i class="bi bi-table text-accent fs-4"></i>
               <h4 class="m-0">Tickets</h4>
@@ -491,7 +507,7 @@
   <script src="knox.js?v=3"></script>
   <script src="prioridades.js?v=10"></script>
   <script src="reports.js?v=15"></script>
-  <script src="jira-search.js?v=18"></script>
-  <script src="jira-ui.js?v=30"></script>
+  <script src="jira-search.js?v=19"></script>
+  <script src="jira-ui.js?v=31"></script>
 </body>
 </html>

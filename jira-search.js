@@ -3,6 +3,7 @@
 const JIRA_PAGE_SIZE = 50;
 const JIRA_MAX_ISSUES = 1000;
 const JIRA_FIELDS = ['summary', 'status', 'assignee', 'updated', 'issuetype'];
+const CLARIFICATION_FIELDS = ['summary', 'status'];
 const COE_SUBSIDIARIES_NAME = 'COE_subsidiaries';
 const PROMOTION_FIELD_ID = 'customfield_25803';
 const JIRA_TZ = 'America/Sao_Paulo';
@@ -76,6 +77,19 @@ function buildSearchJql(filters) {
   return `(${when}) ORDER BY updated DESC`;
 }
 
+function buildClarificationJql(filters) {
+  const clean = assertSearchInput(filters);
+  const users = searchUsers(clean.user);
+  const end = minuteBefore(clean.timeTo);
+  const during = clean.days.map(day => {
+    const start = jqlQuote(jiraStamp(day, clean.timeFrom));
+    const stop = jqlQuote(jiraStamp(day, end));
+    return `status WAS ${jqlQuote('Clarification')} DURING (${start}, ${stop})`;
+  }).join(' OR ');
+  const byUser = users.map(user => `status changed BY ${jqlQuote(user)} TO ${jqlQuote('Clarification')}`).join(' OR ');
+  return `((${during}) AND (${byUser})) ORDER BY updated DESC`;
+}
+
 function foldStatus(value) {
   return String(value || '')
     .normalize('NFD')
@@ -99,6 +113,11 @@ function statusEnds(from, to) {
   const found = `${from || ''}\n${to || ''}`.match(ORIGINAL_NEW);
   if (found) return { from: found[1].trim(), to: found[2].trim() };
   return { from: cleanStatus(from), to: cleanStatus(to) };
+}
+
+function isClarificationName(value) {
+  const name = foldStatus(value);
+  return name === 'clarification' || name === 'clarificacao';
 }
 
 function statusMoveKind(from, to) {
@@ -723,10 +742,96 @@ async function collectIssues(postPage, jql, fields = JIRA_FIELDS) {
   };
 }
 
+function clockParts(iso) {
+  return zonedParts(iso) || wallClock(iso);
+}
+
+function partsCompare(left, right) {
+  if (left.date !== right.date) return left.date < right.date ? -1 : 1;
+  return left.minutes - right.minutes;
+}
+
+function stayOverlapsWindow(entry, leave, windows) {
+  if (!entry) return false;
+  return windows.some(window => {
+    const start = { date: window.date, minutes: window.start };
+    const end = { date: window.date, minutes: window.end };
+    if (partsCompare(entry, end) >= 0) return false;
+    if (!leave) return true;
+    return partsCompare(leave, start) > 0;
+  });
+}
+
+function clarificationGroups(issues, filters) {
+  const clean = assertSearchInput(filters);
+  const windows = buildWindows(clean);
+  const token = filters && filters.token;
+  const left = [];
+  const still = [];
+  (Array.isArray(issues) ? issues : []).forEach(issue => {
+    const fields = issue && issue.fields || {};
+    const history = statusHistory(issue).slice().sort((a, b) => {
+      const leftAt = Date.parse(a.at);
+      const rightAt = Date.parse(b.at);
+      if (!Number.isNaN(leftAt) && !Number.isNaN(rightAt) && leftAt !== rightAt) return leftAt - rightAt;
+      return String(a.at || '').localeCompare(String(b.at || ''));
+    });
+    const stays = [];
+    let open = null;
+    history.forEach(move => {
+      if (isClarificationName(move.to)) {
+        if (!open) open = { at: move.at, byUser: authorMatches(clean.user, move.author) };
+        return;
+      }
+      if (open && foldStatus(move.to)) {
+        stays.push({ ...open, leaveAt: move.at, knownLeave: true });
+        open = null;
+      }
+    });
+    const current = isClarificationName(statusName(fields.status));
+    if (open) stays.push({ ...open, leaveAt: null, knownLeave: false });
+    stays.forEach(stay => {
+      if (!stay.byUser) return;
+      const entry = clockParts(stay.at);
+      if (!entry) return;
+      let overlaps = false;
+      if (stay.knownLeave) {
+        const leave = clockParts(stay.leaveAt);
+        overlaps = leave ? stayOverlapsWindow(entry, leave, windows) : windowHit(entry, windows);
+      } else if (current) {
+        overlaps = stayOverlapsWindow(entry, null, windows);
+      } else {
+        overlaps = windowHit(entry, windows);
+      }
+      if (!overlaps) return;
+      const cleaned = stripSecrets(fields.summary == null ? '' : fields.summary, token);
+      const row = {
+        key: String(issue.key || ''),
+        summary: typeof cleaned === 'string' ? cleaned : '',
+        sentAt: stay.at || '',
+        sentLabel: formatParts(entry)
+      };
+      if (!row.key) return;
+      if (stay.knownLeave || !current) left.push(row);
+      else still.push(row);
+    });
+  });
+  const bySent = (a, b) => {
+    const leftAt = Date.parse(a.sentAt);
+    const rightAt = Date.parse(b.sentAt);
+    if (!Number.isNaN(leftAt) && !Number.isNaN(rightAt) && leftAt !== rightAt) return leftAt - rightAt;
+    return String(a.key).localeCompare(String(b.key));
+  };
+  left.sort(bySent);
+  still.sort(bySent);
+  return { left, still };
+}
+
 const jiraSearchApi = {
   JIRA_PAGE_SIZE,
   JIRA_MAX_ISSUES,
   JIRA_FIELDS,
+  CLARIFICATION_FIELDS,
   JIRA_TZ,
   COE_SUBSIDIARIES_NAME,
   PROMOTION_FIELD_ID,
@@ -742,6 +847,8 @@ const jiraSearchApi = {
   metricLeaders,
   assertSearchInput,
   buildSearchJql,
+  buildClarificationJql,
+  clarificationGroups,
   statusMoveKind,
   zonedParts,
   instantInWindows,

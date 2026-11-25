@@ -635,6 +635,41 @@ async function runSearch(input, fetchImpl = global.fetch, filePath = METRICS_FIL
   };
 }
 
+async function runClarification(input, fetchImpl = global.fetch) {
+  const filters = jira.assertSearchInput(input);
+  const config = jiraConfig();
+  const seen = new Map();
+  const jqls = [];
+  let truncated = false;
+  for (let index = 0; index < filters.days.length; index += 1) {
+    if (index > 0) await new Promise(resolve => setTimeout(resolve, DAY_PAUSE_MS));
+    const day = filters.days[index];
+    const jql = jira.buildClarificationJql({ ...filters, days: [day] });
+    jqls.push(jql);
+    const collected = await jira.collectIssues(
+      body => jiraPost(config, body, fetchImpl),
+      jql,
+      jira.CLARIFICATION_FIELDS
+    );
+    if (collected.truncated) truncated = true;
+    for (const issue of collected.issues) {
+      const key = issue && issue.key ? String(issue.key) : '';
+      if (key && seen.has(key)) continue;
+      if (key) issue.changelog = { histories: await loadChangelog(config, issue.key, fetchImpl) };
+      seen.set(key || `sem-chave-${seen.size}`, issue);
+    }
+  }
+  const groups = jira.clarificationGroups([...seen.values()], { ...filters, token: config.token });
+  const withUrl = row => ({ ...row, url: browseUrl(config.baseUrl, row.key) });
+  return {
+    jql: jqls.join('\n'),
+    truncated,
+    queried: filters.days,
+    left: groups.left.map(withUrl),
+    still: groups.still.map(withUrl)
+  };
+}
+
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -735,6 +770,21 @@ async function handleRequest(req, res, options) {
     sendJson(res, 200, result);
     return;
   }
+  if (url.pathname === '/api/jira/clarification') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Use POST.' });
+      return;
+    }
+    const raw = await readBody(req);
+    let body;
+    try { body = JSON.parse(raw || '{}'); } catch {
+      sendJson(res, 400, { error: 'JSON inválido.' });
+      return;
+    }
+    const result = await runClarification(body, options.fetchImpl || global.fetch);
+    sendJson(res, 200, result);
+    return;
+  }
   if (url.pathname === '/api/jira/notes') {
     if (req.method !== 'POST') {
       sendJson(res, 405, { error: 'Use POST.' });
@@ -807,6 +857,7 @@ module.exports = {
   searchUrl,
   browseUrl,
   runSearch,
+  runClarification,
   publicMessage,
   DAY_PAUSE_MS
 };
