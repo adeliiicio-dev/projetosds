@@ -1350,16 +1350,36 @@ async function testClarificationGroups() {
   assert.equal(leftRow.sentLabel, '10/11, 18:10');
   assert.equal(leftRow.leftTo, 'To do');
   assert.equal(leftRow.leftLabel, '10/11, 18:40');
+  assert.equal(leftRow.passedLabel, 'Clarification → To do · 10/11, 18:40');
   const stillRow = groups.still.find(row => row.key === 'LC-STILL');
   assert.equal(stillRow.sentLabel, '10/11, 17:30');
   assert.equal(stillRow.leftTo, undefined);
   assert.equal(stillRow.leftLabel, undefined);
+  assert.equal(stillRow.passedLabel, undefined);
   const bothLeft = groups.left.find(row => row.key === 'LC-BOTH');
   assert.equal(bothLeft.sentLabel, '10/11, 18:05');
   assert.equal(bothLeft.leftTo, 'Request');
   assert.equal(bothLeft.leftLabel, '10/11, 18:20');
+  assert.equal(bothLeft.passedLabel, 'Clarification → Request → Clarificação · 10/11, 18:30');
   assert.equal(groups.still.find(row => row.key === 'LC-BOTH').sentLabel, '10/11, 18:30');
   assert.equal(groups.still.find(row => row.key === 'LC-SECRET').summary, 'Portal …');
+  const pathIssue = issue('LC-PATH', {
+    summary: 'Caminho',
+    status: 'Done',
+    histories: [
+      historyItem('2026-11-10T17:40:00.000-0300', 'Ada', 'To do', 'Clarification'),
+      historyItem('2026-11-10T18:15:00.000-0300', 'Ada', 'Clarification', 'Request'),
+      historyItem('2026-11-10T18:35:00.000-0300', 'Ada', 'Request', 'In Progress'),
+      historyItem('2026-11-10T19:05:00.000-0300', 'Ada', 'In Progress', 'Done')
+    ]
+  });
+  const pathRow = jira.clarificationGroups([pathIssue], filters).left[0];
+  assert.equal(pathRow.sentLabel, '10/11, 17:40');
+  assert.equal(pathRow.leftTo, 'Request');
+  assert.equal(pathRow.passedLabel, 'Clarification → Request → In Progress · 10/11, 18:35');
+  assert.equal(pathRow.passedLabel.includes('Done'), false);
+  assert.equal(pathRow.passedLabel.includes('17:40'), false);
+  assert.equal(pathRow.passedLabel.includes('18:15'), false);
   const shared = jira.clarificationGroups([stillIssue], { ...filters, user: 'Ada, Ada' });
   assert.equal(shared.still.length, 1);
   const bruno = jira.clarificationGroups([other], { ...filters, user: 'Ada, Bruno Costa' });
@@ -1439,6 +1459,7 @@ async function testClarificationSearch() {
     assert.equal(oneData.left[0].sentLabel, '10/11, 18:10');
     assert.equal(oneData.left[0].leftTo, 'Request');
     assert.equal(oneData.left[0].leftLabel, '10/11, 18:40');
+    assert.equal(oneData.left[0].passedLabel, 'Clarification → Request · 10/11, 18:40');
     assert.equal(oneData.left[0].summary, 'Portal …');
     assert.match(oneData.left[0].url, /\/browse\/LC-21$/);
     assert.deepEqual(oneData.still.map(row => row.key), ['LC-22']);

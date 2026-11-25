@@ -676,14 +676,14 @@ function jrSyncSearchButton() {
 function jrClarificationTable(rows, showLeave) {
   if (!rows.length) return '<p class="muted mb-0">Nenhum ticket.</p>';
   const head = showLeave
-    ? '<th>Ticket</th><th>Enviado para Clarification</th><th>Saiu para</th><th>Quando saiu</th>'
+    ? '<th>Ticket</th><th>Enviado para Clarification</th><th>Saiu para</th><th>Status no período</th>'
     : '<th>Ticket</th><th>Enviado para Clarification</th>';
   return `<div class="table-wrap"><table class="table table-sm table-dark table-bordered mb-0">
       <thead><tr>${head}</tr></thead>
       <tbody>${rows.map(row => `<tr>
         <td>${jrKeyCell(row)}${row.summary ? ` <span class="jr-summary">${jrEsc(row.summary)}</span>` : ''}</td>
         <td>${jrEsc(row.sentLabel || '—')}</td>
-        ${showLeave ? `<td>${jrEsc(row.leftTo || '—')}</td><td>${jrEsc(row.leftLabel || '—')}</td>` : ''}
+        ${showLeave ? `<td>${jrEsc(row.leftTo || '—')}</td><td>${jrEsc(row.passedLabel || '—')}</td>` : ''}
       </tr>`).join('')}</tbody>
     </table></div>`;
 }

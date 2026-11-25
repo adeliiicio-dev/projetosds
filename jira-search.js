@@ -751,6 +751,48 @@ function partsCompare(left, right) {
   return left.minutes - right.minutes;
 }
 
+function cleanStatusLabel(value, token) {
+  const cleaned = stripSecrets(value || '', token);
+  return typeof cleaned === 'string' ? cleaned : '';
+}
+
+function periodPath(history, windows, token) {
+  const changes = [];
+  (Array.isArray(history) ? history : []).forEach(move => {
+    const parts = clockParts(move && move.at);
+    const name = cleanStatusLabel(move && move.to, token);
+    if (!parts || !foldStatus(name)) return;
+    changes.push({ name, at: move.at || '', parts });
+  });
+  const steps = [];
+  const push = step => {
+    const prev = steps[steps.length - 1];
+    if (prev && prev.name === step.name) return;
+    steps.push(step);
+  };
+  (Array.isArray(windows) ? windows : []).forEach(window => {
+    const start = { date: window.date, minutes: window.start };
+    const end = { date: window.date, minutes: window.end };
+    let before = null;
+    const inside = [];
+    changes.forEach(change => {
+      if (partsCompare(change.parts, start) < 0) before = change;
+      else if (partsCompare(change.parts, end) < 0) inside.push(change);
+    });
+    if (before) push(before);
+    inside.forEach(push);
+  });
+  return steps;
+}
+
+function periodPathLabel(steps) {
+  if (!steps.length) return '';
+  const names = steps.map(step => step.name).join(' → ');
+  const last = steps[steps.length - 1];
+  const when = last.parts ? formatParts(last.parts) : '';
+  return when ? `${names} · ${when}` : names;
+}
+
 function stayOverlapsWindow(entry, leave, windows) {
   if (!entry) return false;
   return windows.some(window => {
@@ -790,6 +832,9 @@ function clarificationGroups(issues, filters) {
     });
     const current = isClarificationName(statusName(fields.status));
     if (open) stays.push({ ...open, leaveAt: null, knownLeave: false });
+    const passedSteps = periodPath(history, windows, token);
+    const passed = passedSteps.map(step => step.name);
+    const passedLabel = periodPathLabel(passedSteps);
     stays.forEach(stay => {
       if (!stay.byUser) return;
       const entry = clockParts(stay.at);
@@ -819,6 +864,8 @@ function clarificationGroups(issues, filters) {
         row.leftTo = typeof leftTo === 'string' ? leftTo : '';
         row.leftAt = stay.knownLeave ? (stay.leaveAt || '') : '';
         row.leftLabel = leave ? formatParts(leave) : '';
+        row.passed = passed;
+        row.passedLabel = passedLabel;
         left.push(row);
       } else still.push(row);
     });
